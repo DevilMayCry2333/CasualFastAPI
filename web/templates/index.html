@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Runtime Console</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-card: #1c2333;
+    --bg-input: #0d1117;
+    --border: #30363d;
+    --border-focus: #58a6ff;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #484f58;
+    --accent: #58a6ff;
+    --accent-hover: #79c0ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --cyan: #39d2c0;
+    --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ===== Scrollbar ===== */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ===== Agent List ===== */
+  #agent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .agent-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    cursor: pointer;
+    font-size: 12px;
+    transition: border-color 0.15s;
+  }
+  .agent-item:hover { border-color: var(--text-muted); }
+  .agent-item.selected { border-color: var(--accent); background: rgba(88,166,255,0.08); }
+  .agent-item .agent-name { font-weight: 600; color: var(--text-primary); }
+  .agent-item .agent-room { color: var(--text-secondary); font-size: 11px; font-family: var(--font-mono); }
+  .agent-item .agent-drive { color: var(--cyan); font-size: 10px; margin-left: auto; }
+  .agent-item .agent-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  }
+  .agent-item .agent-dot.idle { background: var(--green); }
+  .agent-item .agent-dot.busy { background: var(--orange); animation: pulse 1s infinite; }
+
+  /* ===== Left Panel ===== */
+  #left-panel {
+    width: 340px;
+    min-width: 340px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+  }
+
+  #left-panel h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+
+  #left-panel .logo {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  #left-panel .logo span { color: var(--text-secondary); font-weight: 400; }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .form-group label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .form-group input, .form-group select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .form-group input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+  }
+
+  .form-group input::placeholder { color: var(--text-muted); }
+
+  .btn {
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #0d1117;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+  .btn-green {
+    background: var(--green);
+    color: #0d1117;
+  }
+  .btn-green:hover:not(:disabled) { opacity: 0.9; }
+
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+  .btn-outline:hover:not(:disabled) { border-color: var(--text-secondary); }
+
+  .btn-danger {
+    background: var(--red);
+    color: #fff;
+  }
+  .btn-danger:hover:not(:disabled) { opacity: 0.9; }
+
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  .btn-full { width: 100%; }
+
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.disconnected { background: var(--text-muted); }
+  .status-dot.connected { background: var(--green); }
+  .status-dot.running { background: var(--orange); animation: pulse 1s infinite; }
+  .status-dot.error { background: var(--red); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ===== Right Panel ===== */
+  #right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  /* State Bar */
+  #state-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    flex-shrink: 0;
+    overflow-x: auto;
+  }
+
+  .state-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .state-badge .label { color: var(--text-secondary); }
+  .state-badge .value { color: var(--accent); font-family: var(--font-mono); font-weight: 500; }
+
+  #state-json-panel {
+    padding: 12px 20px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    max-height: 200px;
+    overflow: auto;
+    flex-shrink: 0;
+  }
+  #state-json-panel pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #state-json-panel .key { color: var(--purple); }
+  #state-json-panel .string { color: var(--green); }
+  #state-json-panel .number { color: var(--cyan); }
+  #state-json-panel .bool { color: var(--orange); }
+  #state-json-panel .null { color: var(--text-muted); }
+  .tab-active { border-bottom: 2px solid var(--accent); }
+
+  /* Action Buttons */
+  #actions {
+    display: flex;
+    gap: 6px;
+    padding: 10px 20px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  /* Output */
+  #output-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .log-entry {
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--bg-card);
+    border-left: 3px solid var(--border);
+  }
+  .log-entry .log-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .log-entry .log-title {
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .log-entry .log-body {
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-entry .log-body pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-input);
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+    overflow-x: auto;
+  }
+  .log-entry.type-system { border-left-color: var(--text-muted); }
+  .log-entry.type-step { border-left-color: var(--accent); }
+  .log-entry.type-chat { border-left-color: var(--green); }
+  .log-entry.type-human { border-left-color: var(--orange); }
+  .log-entry.type-error { border-left-color: var(--red); }
+  .log-entry.type-fold { border-left-color: var(--purple); }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    gap: 8px;
+    text-align: center;
+  }
+  .empty-state .icon { font-size: 48px; opacity: 0.3; }
+  .empty-state .text { font-size: 14px; }
+
+  /* Input Area */
+  #input-area {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #input-area input {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: var(--font-sans);
+    outline: none;
+  }
+  #input-area input:focus { border-color: var(--border-focus); }
+  #input-area input:disabled { opacity: 0.5; }
+  #input-area input::placeholder { color: var(--text-muted); }
+
+  /* Toast / Notification */
+  #toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    z-index: 999;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.success { background: var(--green); color: #0d1117; }
+  #toast.error { background: var(--red); color: #fff; }
+  #toast.info { background: var(--accent); color: #0d1117; }
+</style>
+</head>
+<body>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Left Panel -->
+<div id="left-panel">
+  <div class="logo">⚡ Agent Runtime <span>Console</span></div>
+
+  <h2>LLM 配置</h2>
+
+  <div class="form-group">
+    <label for="api_url">API URL</label>
+    <input id="api_url" type="text" value="http://localhost:28000/v1/chat/completions" placeholder="http://localhost:28000/v1/chat/completions">
+  </div>
+
+  <div class="form-group">
+    <label for="api_key">API Key</label>
+    <input id="api_key" type="password" placeholder="sk-..." value="">
+  </div>
+
+  <div class="form-group">
+    <label for="model">Model</label>
+    <input id="model" type="text" value="deepseek-v4-flash" placeholder="deepseek-v4-flash">
+  </div>
+
+  <div class="form-group">
+    <label for="temperature">Temperature</label>
+    <input id="temperature" type="number" step="0.05" min="0" max="2" value="0.85">
+  </div>
+
+  <div class="form-group">
+    <label for="max_tokens">Max Tokens</label>
+    <input id="max_tokens" type="number" step="1" min="64" max="32768" value="4096">
+  </div>
+
+  <button id="btn-create-agent" class="btn btn-primary btn-full" onclick="createAgent()">
+    ✨ 新建 Agent
+  </button>
+
+  <h2 style="margin-top:8px">Agent 列表</h2>
+  <div id="agent-list">
+    <div style="font-size:12px;color:var(--text-muted);padding:8px 0">暂无 Agent，点击上方创建</div>
+  </div>
+
+  <div class="status-indicator">
+    <span class="status-dot disconnected" id="status-dot"></span>
+    <span id="status-text">未连接</span>
+    <span style="flex:1"></span>
+    <span id="selected-agent-name" style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)"></span>
+  </div>
+
+  <div style="flex:1"></div>
+
+  <!-- World Panel -->
+  <div id="world-panel" style="display:none">
+    <h2>🌍 微光之境 <span id="world-info" style="font-size:11px;color:var(--text-muted);font-weight:400"></span></h2>
+
+    <div id="world-room" class="form-group" style="gap:2px">
+      <div style="font-size:12px;color:var(--text-secondary)">当前位置</div>
+      <div id="disp-room" style="font-size:14px;font-weight:600;color:var(--cyan)">—</div>
+    </div>
+    <div id="world-desc" style="font-size:12px;color:var(--text-secondary);line-height:1.5;padding:6px 0"></div>
+    <div id="world-objects" style="font-size:12px;color:var(--green);padding:2px 0"></div>
+    <div id="world-inventory" style="font-size:12px;color:var(--purple);padding:2px 0"></div>
+    <div id="world-observations" style="font-size:11px;color:var(--text-muted);padding:4px 0;border-top:1px solid var(--border);margin-top:4px"></div>
+
+    <div id="world-agents" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
+      <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">所有 Agent</div>
+      <div id="world-agent-list" style="font-size:11px;color:var(--text-muted)">—</div>
+    </div>
+  </div>
+
+  <button id="btn-disconnect" class="btn btn-outline btn-sm" style="display:none" onclick="disconnectAll()">
+    ⏻ 断开所有
+  </button>
+</div>
+
+<!-- Right Panel -->
+<div id="right-panel">
+  <!-- State Bar -->
+  <div id="state-bar">
+    <div class="state-badge"><span class="label">Agent</span> <span class="value" id="disp-selected-name" style="color:var(--accent);max-width:80px;overflow:hidden;text-overflow:ellipsis">—</span></div>
+    <div class="state-badge"><span class="label">Round</span> <span class="value" id="disp-round">0</span></div>
+    <div class="state-badge"><span class="label">Fold</span> <span class="value" id="disp-fold">0</span></div>
+    <div class="state-badge"><span class="label">History</span> <span class="value" id="disp-history">0</span></div>
+    <div class="state-badge"><span class="label">Topic</span> <span class="value" id="disp-topic" style="color:var(--cyan)">—</span></div>
+    <div class="state-badge"><span class="label">Belief</span> <span class="value" id="disp-belief" style="color:var(--green)">—</span></div>
+    <div class="state-badge"><span class="label">Goal</span> <span class="value" id="disp-goal" style="color:var(--orange)">—</span></div>
+  </div>
+
+  <!-- State / Causal Chain tabs -->
+  <div id="state-json-panel">
+    <div style="display:flex;gap:8px;margin-bottom:6px;font-size:11px;border-bottom:1px solid var(--border);padding-bottom:4px">
+      <span id="tab-state" class="tab-active" style="cursor:pointer;color:var(--accent);font-weight:600" onclick="switchPanelTab('state')">📊 State</span>
+      <span id="tab-causal" style="cursor:pointer;color:var(--text-muted)" onclick="switchPanelTab('causal')">🔗 因果链</span>
+      <span id="tab-comm" style="cursor:pointer;color:var(--text-muted)" onclick="switchPanelTab('comm')">💬 通信</span>
+    </div>
+    <div id="panel-state" style="max-height:300px;overflow-y:auto">
+      <div style="color:var(--text-muted);font-size:12px;padding:8px;text-align:center">创建 Agent 后查看所有状态</div>
+    </div>
+    <div id="panel-causal" style="display:none;max-height:300px;overflow-y:auto;font-family:var(--font-mono);font-size:11px;line-height:1.5">
+      <div id="causal-chain-display" style="color:var(--text-muted)">选择 Agent 后查看因果链</div>
+    </div>
+    <div id="panel-comm" style="display:none;max-height:300px;overflow-y:auto;font-family:var(--font-sans);font-size:12px;line-height:1.5">
+      <div id="comm-display" style="color:var(--text-muted);padding:12px;text-align:center">选择 Agent 后查看通信记录</div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div id="actions">
+    <button class="btn btn-outline btn-sm" disabled onclick="doStep()">⟳ Step</button>
+    <button class="btn btn-green btn-sm" disabled onclick="toggleAuto()" id="btn-auto">▶ Auto</button>
+    <button class="btn btn-outline btn-sm" disabled onclick="doFold()">⬡ Fold</button>
+    <button class="btn btn-outline btn-sm" disabled onclick="doTranslate()">🌐 Translate</button>
+    <button class="btn btn-outline btn-sm" disabled onclick="doSnapshot()">💾 Snapshot</button>
+    <button class="btn btn-outline btn-sm" disabled onclick="doRestore()" id="btn-restore">📂 Restore</button>
+    <button class="btn btn-outline btn-sm" disabled onclick="refreshState()">🔄 Refresh</button>
+    <button class="btn btn-outline btn-sm" onclick="clearLog()">🗑️ Clear</button>
+  </div>
+
+  <!-- Output -->
+  <div id="output-area">
+    <div class="empty-state">
+      <div class="icon">⚡</div>
+      <div class="text">连接到 LLM 后开始使用</div>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div id="input-area">
+    <input id="chat-input" type="text" placeholder="输入消息..." disabled
+           onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendChat()}">
+    <button id="btn-send" class="btn btn-primary" disabled onclick="sendChat()">发送</button>
+  </div>
+</div>
+
+<script>
+// ===== State =====
+let sessions = [];                // [{id, name, drives, position}]
+let selectedSessionId = null;
+let busy = false;
+let autoThinking = false;
+let autoInterval = null;
+let autoCount = 0;
+const AUTO_INTERVAL_MS = 5000;
+
+const $ = id => document.getElementById(id);
+const statusDot = $('status-dot');
+const statusText = $('status-text');
+
+// ===== Toast =====
+function toast(msg, type = 'info') {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = type + ' show';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ===== JSON Highlight =====
+function highlightJSON(obj) {
+  if (obj === null || obj === undefined) return '<span class="null">null</span>';
+  if (typeof obj === 'string') return '<span class="string">"' + escapeHTML(obj) + '"</span>';
+  if (typeof obj === 'number') return '<span class="number">' + obj + '</span>';
+  if (typeof obj === 'boolean') return '<span class="bool">' + obj + '</span>';
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    const items = obj.map(v => highlightJSON(v)).join(', ');
+    return '[' + items + ']';
+  }
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '{}';
+    const lines = keys.map(k => {
+      const key = '<span class="key">"' + escapeHTML(k) + '"</span>';
+      const val = highlightJSON(obj[k]);
+      return '  ' + key + ': ' + val;
+    });
+    return '{\n' + lines.join(',\n') + '\n}';
+  }
+  return String(obj);
+}
+
+function escapeHTML(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ===== Agent Management =====
+function getSelected() { return sessions.find(s => s.id === selectedSessionId) || null; }
+
+function renderAgentList() {
+  const list = $('agent-list');
+  if (sessions.length === 0) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">暂无 Agent，点击上方创建</div>';
+    statusDot.className = 'status-dot disconnected';
+    statusText.textContent = '未连接';
+    $('selected-agent-name').textContent = '';
+    $('world-panel').style.display = 'none';
+    $('btn-disconnect').style.display = 'none';
+    $('btn-auto').disabled = true;
+    return;
+  }
+
+  $('world-panel').style.display = '';
+  $('btn-disconnect').style.display = '';
+  $('btn-auto').disabled = false;
+
+  function driveBar(drives, key) {
+    const v = Math.min(Math.max(drives[key] || 0, 0), 10);
+    const full = Math.round(v);
+    const empty = 10 - full;
+    const label = key === 'curiosity' ? 'cur' : key === 'boredom' ? 'bor' : key === 'belonging' ? 'bel' : key;
+    return `${label} ${'█'.repeat(full)}${'░'.repeat(empty)} ${v.toFixed(1)}`;
+  }
+
+  function statePreview(st) {
+    if (!st) return '{}';
+    const keys = Object.keys(st);
+    if (keys.length === 0) return '{}';
+    const pairs = keys.slice(0, 5).map(k => `${k}:${typeof st[k]==='string' ? '"'+st[k].slice(0,30)+'"' : JSON.stringify(st[k]).slice(0,30)}`);
+    return '{ ' + pairs.join(', ') + (keys.length > 5 ? ' …' : '') + ' }';
+  }
+
+  function stateDetailHTML(st) {
+    if (!st) return '<span class="null">null</span>';
+    let html = '';
+    for (const [k, v] of Object.entries(st)) {
+      const keyH = '<span class="key">"' + escapeHTML(k) + '"</span>';
+      const valH = highlightJSON(v);
+      html += keyH + ': ' + valH + '<br>';
+    }
+    return html || '<span class="null">null</span>';
+  }
+
+  let html = '';
+  for (const s of sessions) {
+    const isSelected = s.id === selectedSessionId;
+    const d = s.drives || {};
+    const state = s.state || {};
+    const goal = state.goal || '—';
+    const belief = state.belief || '—';
+    const topic = state.topic || '';
+    const dotClass = isSelected ? 'busy' : 'idle';
+    const expandedId = 'state-' + s.id.replace(/[^a-zA-Z0-9]/g, '');
+
+    html += `<div class="agent-item ${isSelected ? 'selected' : ''}" data-agent-id="${escapeHTML(s.id)}">
+      <div style="width:100%">
+        <div style="display:flex;align-items:center;gap:6px;width:100%">
+          <span class="agent-dot ${dotClass}"></span>
+          <span class="agent-name">${s.name}</span>
+          <span class="agent-room">${s.position || '?'}</span>
+          <span style="font-size:10px;color:var(--text-muted)">R${s.round||0}</span>
+          <span style="flex:1"></span>
+          <span style="font-size:10px;color:var(--text-secondary)">${s.status||''}</span>
+        </div>
+        <div style="font-size:10px;line-height:1.5;padding:4px 0 0 14px;color:var(--text-secondary)">
+          <div style="color:var(--cyan)">🔭 ${driveBar(d, 'curiosity')} &nbsp;|&nbsp; 😴 ${driveBar(d, 'boredom')} &nbsp;|&nbsp; 🤝 ${driveBar(d, 'belonging')}</div>
+          <div style="color:var(--orange)">🎯 ${escapeHTML(goal)}</div>
+          <div style="color:var(--text-muted);font-size:9px">💭 ${escapeHTML(belief)}${topic ? ' · '+escapeHTML(topic) : ''}</div>
+          ${s.thought_pool && s.thought_pool.length ? `<div style="color:var(--purple);font-size:9px">🧠 ${escapeHTML(s.thought_pool[0]?.thought || s.thought_pool[0]?.goal || JSON.stringify(s.thought_pool[0]))}</div>` : ''}
+          <div style="margin-top:3px;display:flex;gap:8px">
+            <span style="font-size:9px;color:var(--text-muted)">🔗 ${s.causal_chain_count || 0} 条因果</span>
+            <span style="font-size:9px;color:var(--cyan)">💬 ${s.mailbox_count || 0} 条消息</span>
+            <span style="font-size:9px;color:var(--text-muted);cursor:pointer" data-toggle-state="${escapeHTML(expandedId)}">📋 状态 ▾</span>
+            <span style="font-size:9px;color:var(--accent);cursor:pointer" data-causal-chain="${escapeHTML(s.id)}">🔗 因果链</span>
+            <div id="${expandedId}" style="display:none;font-family:var(--font-mono);font-size:10px;line-height:1.4;padding:4px 6px;margin-top:2px;background:var(--bg-input);border-radius:4px;white-space:pre-wrap;word-break:break-all;color:var(--text-primary)">
+              ${stateDetailHTML(state)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html;
+
+  const sel = getSelected();
+  if (sel) {
+    statusDot.className = 'status-dot connected';
+    statusText.textContent = `已选择 ${sel.name}`;
+    $('selected-agent-name').textContent = sel.name;
+  }
+}
+
+function toggleState(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function selectAgent(id) {
+  const found = sessions.find(s => s.id === id);
+  if (!found) return;
+  selectedSessionId = id;
+  renderAgentList();
+  $('btn-auto').disabled = false;
+  addLog({ type: 'system', title: `🎯 切换到 ${found.name}`, body: '' });
+  // If not busy, immediately refresh; otherwise it'll catch up on next cycle
+  if (!busy) {
+    refreshState();
+    refreshWorld();
+    fetchCausalChainSilent();
+  }
+}
+
+async function fetchCausalChainSilent() {
+  if (!selectedSessionId) return;
+  try {
+    const res = await api('GET', '/api/causal-chain/' + selectedSessionId);
+    const sel = sessions.find(s => s.id === selectedSessionId);
+    if (sel && res.entries) {
+      sel.causal_chain = res.entries.slice(-10);
+      sel.causal_chain_count = res.count || res.entries.length;
+    }
+    renderCausalChain();
+  } catch (e) {
+    // Silently fail
+  }
+}
+
+async function createAgent() {
+  if (busy) return;
+  setBusy(true);
+  try {
+    const req = {
+      api_url: $('api_url').value.trim(),
+      api_key: $('api_key').value,
+      model: $('model').value.trim(),
+      temperature: parseFloat($('temperature').value) || 0.85,
+      max_tokens: parseInt($('max_tokens').value) || 4096,
+    };
+    const res = await api('POST', '/api/connect', req);
+    const sid = res.session_id;
+    const name = `Agent-${sessions.length + 1}`;
+    sessions.push({ id: sid, name, drives: {}, position: '?' });
+    selectedSessionId = sid;
+    renderAgentList();
+    addLog({ type: 'system', title: `✨ ${name} 已诞生`, body: `Session: ${sid}\nModel: ${req.model}` });
+    toast(`${name} 创建成功`, 'success');
+    refreshAllAgents();
+    refreshWorld();
+  } catch (e) {
+    toast('创建失败: ' + e.message, 'error');
+    addLog({ type: 'error', title: '❌ 创建失败', body: e.message });
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function disconnectAll() {
+  for (const s of sessions) {
+    try { await api('DELETE', '/api/session/' + s.id); } catch {}
+  }
+  sessions = [];
+  selectedSessionId = null;
+  renderAgentList();
+  addLog({ type: 'system', title: '⏻ 已断开所有 Agent' });
+  toast('已断开', 'info');
+  ['disp-round','disp-fold','disp-history','disp-topic','disp-belief','disp-goal'].forEach(id => {
+    $(id).textContent = '0';
+  });
+  $('btn-auto').disabled = true;
+  if (autoThinking) stopAuto();
+  // Reset state panel
+  const panel = $('panel-state');
+  if (panel) panel.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px;text-align:center">创建 Agent 后查看所有状态</div>';
+}
+
+function setBusy(b) {
+  busy = b;
+  const hasSel = !!selectedSessionId && sessions.some(s => s.id === selectedSessionId);
+  document.querySelectorAll('#actions .btn').forEach(el => {
+    if (el.id === 'btn-auto') return;
+    const disabled = b || !hasSel;
+    if (el.id === 'btn-restore') { el.disabled = disabled; return; }
+    el.disabled = disabled;
+  });
+  // Auto button: enabled when any session exists and not busy (but autoThinking overrides)
+  $('btn-auto').disabled = b || sessions.length === 0;
+  $('btn-send').disabled = b || !hasSel;
+  $('chat-input').disabled = b || !hasSel;
+  $('btn-create-agent').disabled = b;
+  if (b) {
+    statusDot.className = 'status-dot running';
+    statusText.textContent = '运行中…';
+  } else if (hasSel) {
+    const sel = getSelected();
+    statusDot.className = 'status-dot connected';
+    statusText.textContent = sel ? `已选择 ${sel.name}` : '已连接';
+  }
+}
+
+// ===== Output Log =====
+function addLog(data) {
+  const area = $('output-area');
+  const empty = area.querySelector('.empty-state');
+  if (empty) area.innerHTML = '';
+  const entry = document.createElement('div');
+  entry.className = 'log-entry type-' + (data.type || 'system');
+  const time = document.createElement('div');
+  time.className = 'log-time';
+  time.textContent = new Date().toLocaleTimeString();
+  entry.appendChild(time);
+  if (data.title) {
+    const title = document.createElement('div');
+    title.className = 'log-title';
+    title.textContent = data.title;
+    entry.appendChild(title);
+  }
+  if (data.body) {
+    const body = document.createElement('div');
+    body.className = 'log-body';
+    if (data.html) { body.innerHTML = data.html; }
+    else { body.textContent = data.body; }
+    entry.appendChild(body);
+  }
+  area.appendChild(entry);
+  area.scrollTop = area.scrollHeight;
+}
+
+// ===== API calls =====
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let err;
+    try { err = await r.json(); } catch { err = { detail: r.statusText }; }
+    throw new Error(err.detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+// ===== Multi-Agent Auto Think =====
+function toggleAuto() {
+  const btn = $('btn-auto');
+  if (autoThinking) {
+    stopAuto();
+    addLog({ type: 'system', title: '⏸ Auto 已暂停', body: `共执行 ${autoCount} 轮` });
+    toast('Auto 已暂停', 'info');
+  } else {
+    if (sessions.length === 0 || busy) return;
+    autoThinking = true;
+    autoCount = 0;
+    btn.textContent = '⏹ Stop';
+    btn.className = 'btn btn-danger btn-sm';
+    addLog({ type: 'system', title: '▶ Auto 全员自主思考已启动',
+      body: `共 ${sessions.length} 个 Agent，每 ${AUTO_INTERVAL_MS/1000} 秒一轮` });
+    toast('Auto 已启动', 'success');
+    // Disable creation during auto
+    $('btn-create-agent').disabled = true;
+    doAutoRound();
+  }
+}
+
+async function doAutoRound() {
+  if (!autoThinking || sessions.length === 0) { stopAuto(); return; }
+
+  autoCount++;
+  const agentList = [...sessions];
+  for (let i = 0; i < agentList.length; i++) {
+    if (!autoThinking) break;
+    const s = agentList[i];
+    try {
+      statusDot.className = 'status-dot running';
+      statusText.textContent = `Auto: ${s.name} 思考中...`;
+
+      const res = await api('POST', '/api/step', { session_id: s.id });
+      s.drives = res.drives || s.drives;
+      s.round = res.round;
+      s.state = res.state;
+      s.status = 'idle';
+
+      // Log inter-agent communication during auto
+      if (res.messages_sent > 0) {
+        addLog({
+          type: 'system',
+          title: '💬 ' + s.name + ' 发送了 ' + res.messages_sent + ' 条消息',
+          body: (res.world_model_updates?.send_messages || []).map(m =>
+            '→ ' + (m.to_agent === '*' ? '全体' : m.to_agent?.slice(0,8)) + ': '
+            + (m.content?.text || m.content?.statement || JSON.stringify(m))
+          ).join('\n'),
+        });
+      }
+      if (res.mailbox_unread > 0) {
+        s.mailbox_count = res.mailbox_unread;
+      }
+
+      // If this is the selected agent, update the right panel
+      if (s.id === selectedSessionId) {
+        updateStateBar(res.state, res.round);
+      }
+
+      renderAgentList();
+      // Brief pause between agents to avoid overwhelming the API
+      await new Promise(r => setTimeout(r, 300));
+
+    } catch (e) {
+      addLog({ type: 'error', title: `❌ ${s.name} 思考失败`, body: e.message });
+    }
+  }
+
+  // Refresh world + all agent data + causal chain + communication
+  refreshAllAgents();
+  refreshWorld();
+  renderCausalChain();
+  // If comm tab is active, refresh it
+  if ($('panel-comm').style.display !== 'none') {
+    renderCommPanel();
+  }
+
+  if (autoThinking) {
+    statusDot.className = 'status-dot connected';
+    const sel = getSelected();
+    statusText.textContent = sel ? `Auto #${autoCount} 完成 (${agentList.length} agents)` : '已连接';
+    // Schedule next round — chained setTimeout prevents overlap
+    clearTimeout(autoInterval);
+    autoInterval = setTimeout(() => {
+      if (autoThinking) doAutoRound();
+    }, AUTO_INTERVAL_MS);
+  }
+}
+
+function stopAuto() {
+  if (!autoThinking) return;
+  autoThinking = false;
+  if (autoInterval) { clearTimeout(autoInterval); autoInterval = null; }
+  const btn = $('btn-auto');
+  btn.textContent = '▶ Auto';
+  btn.className = 'btn btn-green btn-sm';
+  $('btn-create-agent').disabled = false;
+  setBusy(false);
+  $('btn-auto').disabled = sessions.length === 0;
+}
+
+// ===== Refresh All Agents =====
+async function refreshAllAgents() {
+  if (sessions.length === 0) return;
+  try {
+    const res = await api('GET', '/api/sessions');
+    // Update session data from server
+    for (const serverS of res.sessions) {
+      const localS = sessions.find(s => s.id === serverS.id);
+      if (localS) {
+        localS.drives = serverS.drives || {};
+        localS.round = serverS.round || 0;
+        localS.state = serverS.state || {};
+        localS.position = serverS.position || '?';
+        localS.status = serverS.status || '';
+        localS.thought_pool = serverS.thought_pool || [];
+        localS.identity_anchor = serverS.identity_anchor || null;
+        localS.causal_chain = serverS.causal_chain_last || [];
+        localS.causal_chain_count = serverS.causal_chain_count || 0;
+        localS.mailbox_count = serverS.mailbox_count || 0;
+        localS.shared_knowledge_count = serverS.shared_knowledge_count || 0;
+      }
+    }
+
+    // Update selected agent's state bar
+    if (selectedSessionId) {
+      const sel = sessions.find(s => s.id === selectedSessionId);
+      if (sel && sel.state) {
+        updateStateBar(sel.state, sel.round);
+      }
+    }
+
+    // Update world info
+    if (res.world) {
+      const w = res.world;
+      const info = $('world-info');
+      info.textContent = `${w.rooms} rooms · ${w.agents} agents · tick ${w.meta?.tick || 0}`;
+      if (w.agent_positions) {
+        const agentList = $('world-agent-list');
+        const names = sessions.reduce((acc, s) => { acc[s.id] = s.name; return acc; }, {});
+        const entries = Object.entries(w.agent_positions);
+        if (entries.length === 0) {
+          agentList.textContent = '—';
+        } else {
+          agentList.innerHTML = entries.map(([sid, pos]) => {
+            const name = names[sid] || sid.slice(0, 8);
+            const isSelected = sid === selectedSessionId;
+            return `<div style="padding:2px 0 ${isSelected ? ';color:var(--accent);font-weight:600' : ''}">${isSelected ? '▸' : '·'} ${name} @ ${pos}</div>`;
+          }).join('');
+        }
+      }
+    }
+
+    renderAgentList();
+    // Also update the multi-agent state display
+    renderAllAgentStates();
+  } catch (e) {
+    // Silently fail on refresh errors
+  }
+}
+
+// ===== Step =====
+async function doStep() {
+  if (!selectedSessionId || busy) return;
+  setBusy(true);
+  try {
+    const res = await api('POST', '/api/step', { session_id: selectedSessionId });
+    // Log sent messages using the LLM output (stored in world_model_updates)
+    let msgLog = '';
+    if (res.messages_sent > 0) {
+      msgLog = '\n💬 发送了 ' + res.messages_sent + ' 条消息';
+      // Read from the step response's world_model_updates
+      const sent = res.world_model_updates?.send_messages || [];
+      for (const m of sent) {
+        const toName = m.to_agent === '*' ? '全体' : (sessions.find(s => s.id === m.to_agent)?.name || m.to_agent?.slice(0, 8));
+        msgLog += '\n  → ' + toName + ': ' + (m.content?.text || m.content?.statement || JSON.stringify(m));
+      }
+    }
+    addLog({
+      type: 'step',
+      title: '⟳ 自主思考 第 ' + res.round + ' 轮' + (res.mailbox_unread > 0 ? ' 📬' + res.mailbox_unread : ''),
+      html: '<pre>' + escapeHTML(JSON.stringify(res.state, null, 2)) + '</pre>' + (msgLog ? '<div style="color:var(--cyan);margin-top:4px">' + escapeHTML(msgLog) + '</div>' : ''),
+    });
+    updateStateBar(res.state, res.round);
+    // Update session data
+    const s = sessions.find(x => x.id === selectedSessionId);
+    if (s) {
+      s.drives = res.drives || s.drives;
+      s.round = res.round;
+      s.state = res.state;
+    }
+    refreshAllAgents();
+    refreshWorld();
+    renderCausalChain();
+    toast('第 ' + res.round + ' 轮完成', 'info');
+  } catch (e) {
+    toast('Step 失败: ' + e.message, 'error');
+    addLog({ type: 'error', title: '❌ Step 失败', body: e.message });
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ===== Chat =====
+async function sendChat() {
+  const input = $('chat-input');
+  const msg = input.value.trim();
+  if (!msg || !selectedSessionId || busy) return;
+  input.value = '';
+  if (autoThinking) { stopAuto(); addLog({ type: 'system', title: '⏸ Auto 已暂停', body: '人类输入中断，优先处理消息' }); }
+  setBusy(true);
+  const sel = getSelected();
+  addLog({ type: 'human', title: `🧑 你对${sel ? sel.name : 'Agent'}说`, body: msg });
+  try {
+    const res = await api('POST', '/api/chat', { session_id: selectedSessionId, message: msg });
+    let body = res.nl_response || '(无文本回复)';
+    if (res.state && Object.keys(res.state).length) {
+      body += '\n\n===STATE===\n' + JSON.stringify(res.state, null, 2);
+    }
+    addLog({ type: 'chat', title: `🤖 ${sel ? sel.name : 'Agent'} 回应`, body: body });
+    updateStateBar(res.state, res.round);
+    // Update session data
+    const s = sessions.find(x => x.id === selectedSessionId);
+    if (s) {
+      s.drives = res.drives || s.drives;
+      s.round = res.round;
+      s.state = res.state;
+    }
+    refreshAllAgents();
+    refreshWorld();
+    renderCausalChain();
+  } catch (e) {
+    toast('Chat 失败: ' + e.message, 'error');
+    addLog({ type: 'error', title: '❌ Chat 失败', body: e.message });
+  } finally {
+    setBusy(false);
+    input.focus();
+  }
+}
+
+// ===== Fold =====
+async function doFold() {
+  if (!selectedSessionId || busy) return;
+  setBusy(true);
+  try {
+    const res = await api('POST', '/api/fold', { session_id: selectedSessionId });
+    addLog({
+      type: 'fold',
+      title: '⬡ Fold #' + res.fold_count,
+      html: '<pre>' + escapeHTML(JSON.stringify(res.identity_anchor, null, 2)) + '</pre>',
+    });
+    refreshAllAgents();
+    toast('Fold #' + res.fold_count + ' 完成', 'success');
+  } catch (e) {
+    toast('Fold 失败: ' + e.message, 'error');
+    addLog({ type: 'error', title: '❌ Fold 失败', body: e.message });
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ===== Translate =====
+async function doTranslate() {
+  if (!selectedSessionId || busy) return;
+  setBusy(true);
+  try {
+    const res = await api('POST', '/api/translate', { session_id: selectedSessionId });
+    addLog({ type: 'system', title: '🌐 状态翻译', body: res.translation });
+    toast('翻译完成', 'info');
+  } catch (e) {
+    toast('Translate 失败: ' + e.message, 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ===== Snapshot =====
+async function doSnapshot() {
+  if (!selectedSessionId || busy) return;
+  setBusy(true);
+  try {
+    const res = await api('POST', '/api/snapshot', { session_id: selectedSessionId, filepath: '' });
+    addLog({ type: 'system', title: '💾 快照已保存', body: res.filepath });
+    toast('已保存: ' + res.filepath, 'success');
+  } catch (e) {
+    toast('Snapshot 失败: ' + e.message, 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ===== Restore =====
+async function doRestore() {
+  const fp = prompt('输入快照文件路径:');
+  if (!fp) return;
+  setBusy(true);
+  try {
+    const res = await api('POST', '/api/restore', { filepath: fp });
+    const sid = res.session_id;
+    sessions.push({ id: sid, name: `Agent-${sessions.length + 1}`, drives: {}, position: '?' });
+    selectedSessionId = sid;
+    renderAgentList();
+    addLog({ type: 'system', title: '📂 已恢复', body: 'Session: ' + sid + '\n从: ' + fp });
+    refreshAllAgents();
+    refreshWorld();
+    toast('恢复成功', 'success');
+  } catch (e) {
+    toast('Restore 失败: ' + e.message, 'error');
+    addLog({ type: 'error', title: '❌ Restore 失败', body: e.message });
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ===== Causal Chain Display =====
+function switchPanelTab(tab) {
+  const panelState = $('panel-state');
+  const panelCausal = $('panel-causal');
+  const panelComm = $('panel-comm');
+  const tabState = $('tab-state');
+  const tabCausal = $('tab-causal');
+  const tabComm = $('tab-comm');
+
+  // Reset all
+  [panelState, panelCausal, panelComm].forEach(p => p.style.display = 'none');
+  [tabState, tabCausal, tabComm].forEach(t => { t.style.color = 'var(--text-muted)'; t.style.fontWeight = '400'; });
+
+  if (tab === 'state') {
+    panelState.style.display = '';
+    tabState.style.color = 'var(--accent)';
+    tabState.style.fontWeight = '600';
+    renderAllAgentStates();
+  } else if (tab === 'causal') {
+    panelCausal.style.display = '';
+    tabCausal.style.color = 'var(--accent)';
+    tabCausal.style.fontWeight = '600';
+    renderCausalChain();
+  } else if (tab === 'comm') {
+    panelComm.style.display = '';
+    tabComm.style.color = 'var(--accent)';
+    tabComm.style.fontWeight = '600';
+    renderCommPanel();
+  }
+}
+
+function renderAllAgentStates() {
+  const panel = $('panel-state');
+  if (!panel) return;
+  if (sessions.length === 0) {
+    panel.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px;text-align:center">创建 Agent 后查看所有状态</div>';
+    return;
+  }
+  let html = '';
+  for (const s of sessions) {
+    const isSelected = s.id === selectedSessionId;
+    const state = s.state || {};
+    const borderColor = isSelected ? 'var(--accent)' : 'var(--border)';
+    const bgColor = isSelected ? 'rgba(88,166,255,0.06)' : 'var(--bg-input)';
+    const nameColor = isSelected ? 'var(--accent)' : 'var(--text-primary)';
+
+    html += `<div style="margin-bottom:6px;padding:6px 8px;border:1px solid ${borderColor};border-radius:4px;background:${bgColor};cursor:pointer" data-agent-id="${escapeHTML(s.id)}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-weight:600;color:${nameColor};font-size:12px">${s.name}</span>
+        <span style="font-size:10px;color:var(--text-muted)">R${s.round||0}</span>
+        <span style="font-size:10px;color:var(--text-secondary)">@ ${s.position||'?'}</span>
+        <span style="font-size:10px;color:var(--cyan)">m:${(s.identity_maturity || 0).toFixed(2)}</span>
+        <span style="flex:1"></span>
+        <span style="font-size:10px;color:var(--orange)">🔭${((s.drives&&s.drives.curiosity)||0).toFixed(1)}</span>
+      </div>
+      <pre style="font-family:var(--font-mono);font-size:11px;line-height:1.4;margin:0;white-space:pre-wrap;word-break:break-all;color:var(--text-primary)">${highlightJSON(state)}</pre>
+    </div>`;
+  }
+  panel.innerHTML = html;
+}
+
+function renderCausalChain() {
+  const display = $('causal-chain-display');
+  if (!display) return;
+  const sel = getSelected();
+  if (!sel || !sel.causal_chain || sel.causal_chain.length === 0) {
+    display.innerHTML = '<span style="color:var(--text-muted)">暂无因果链数据</span>';
+    return;
+  }
+
+  const causeSymbols = { init: '⚡', self: '⟳', human: '◈', environment: '⊙', reflect: '◇' };
+  let html = '';
+  // Show entries newest first (reversed)
+  const entries = [...sel.causal_chain].reverse();
+  for (const e of entries) {
+    const symbol = causeSymbols[e.cause] || '?';
+    const diff = e.state_diff || {};
+    const diffKeys = Object.keys(diff);
+    const actionText = e.action ? `<span style="color:var(--green)">⚡ ${escapeHTML(e.action)}</span>` : '';
+    const parentsText = e.parent_rounds && e.parent_rounds.length > 0
+      ? `<span style="color:var(--text-muted);font-size:10px"> ← R${e.parent_rounds.filter(r => r !== e.round).join(',R')}</span>`
+      : '';
+    const reasoning = e.reasoning
+      ? `<div style="color:var(--orange);font-size:10px;padding-left:12px">⤷ ${escapeHTML(e.reasoning.slice(0,120))}</div>`
+      : '';
+    const diffHtml = diffKeys.length > 0
+      ? `<span style="color:var(--purple);font-size:10px">${diffKeys.slice(0,4).join(', ')}${diffKeys.length > 4 ? ' …' : ''}</span>`
+      : '';
+
+    html += `<div style="margin-bottom:6px;padding:4px 6px;border-left:2px solid var(--border);background:var(--bg-input);border-radius:3px">
+      <div style="display:flex;gap:6px;align-items:center">
+        <span style="font-weight:600">${symbol} R${e.round}</span>
+        <span style="color:var(--text-secondary);font-size:10px">${e.cause}</span>
+        ${actionText}
+        <span style="flex:1"></span>
+        <span style="font-size:10px;color:var(--text-muted)">${diffHtml}</span>
+      </div>
+      <div style="color:var(--cyan);font-size:10px;padding-left:2px">${escapeHTML(e.core_diff || '')}</div>
+      ${reasoning}
+      <div style="font-size:9px;color:var(--text-muted);padding-left:2px">${parentsText}</div>
+    </div>`;
+  }
+
+  html += `<div style="font-size:10px;color:var(--text-muted);text-align:center;padding:4px">共 ${sel.causal_chain_count || entries.length} 条因果 · `
+    + `<span style="cursor:pointer;color:var(--accent)" onclick="fetchFullCausalChain()">查看全部</span></div>`;
+
+  display.innerHTML = html;
+}
+
+async function fetchAndShowCausalChain(sessionId) {
+  // Called from agent list item click
+  if (!sessionId) return;
+  try {
+    const res = await api('GET', '/api/causal-chain/' + sessionId);
+    const sel = sessions.find(s => s.id === sessionId);
+    if (sel && res.entries) {
+      sel.causal_chain = res.entries.slice(-10);
+      sel.causal_chain_count = res.count || res.entries.length;
+    }
+    // Switch to causal tab if viewing this agent
+    if (selectedSessionId === sessionId) {
+      switchPanelTab('causal');
+    } else {
+      selectAgent(sessionId);
+      setTimeout(() => switchPanelTab('causal'), 100);
+    }
+  } catch (e) {
+    toast('获取因果链失败: ' + e.message, 'error');
+  }
+}
+
+async function fetchFullCausalChain() {
+  if (!selectedSessionId) return;
+  try {
+    const res = await api('GET', '/api/causal-chain/' + selectedSessionId);
+    const sel = sessions.find(s => s.id === selectedSessionId);
+    if (sel && res.entries) {
+      sel.causal_chain = res.entries;
+      sel.causal_chain_count = res.count || res.entries.length;
+    }
+    renderCausalChain();
+    switchPanelTab('causal');
+  } catch (e) {
+    toast('获取全量因果链失败: ' + e.message, 'error');
+  }
+}
+
+// ===== Communication Panel =====
+const messageTypeIcons = {
+  observation: '👁', question: '❓', answer: '💡',
+  hypothesis: '⊕', plan: '📋', request: '📩',
+  warning: '⚠', event: '⊙', report: '📄',
+  share_memory: '🔗', broadcast: '📢',
+  inquiry: '🤝', greeting: '👋', suggestion: '💡',
+  response: '↩️', information: 'ℹ️',
+};
+
+async function fetchCommData(agentId) {
+  if (!agentId) return null;
+  try {
+    const [mailboxRes, sentRes, eventsRes] = await Promise.all([
+      api('GET', '/api/mailbox/' + agentId + '?max_items=20'),
+      api('GET', '/api/sent-messages/' + agentId + '?max_items=20'),
+      api('GET', '/api/event-bus/' + agentId).catch(() => ({ events: [] })),
+    ]);
+    return { mailbox: mailboxRes, sent: sentRes, events: eventsRes };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function renderCommPanel() {
+  const display = $('comm-display');
+  const sel = getSelected();
+  if (!sel) {
+    display.innerHTML = '<div style="color:var(--text-muted);padding:12px;text-align:center">请先选择一个 Agent</div>';
+    return;
+  }
+
+  display.innerHTML = '<div style="color:var(--text-muted);padding:12px;text-align:center">加载通信数据...</div>';
+
+  const data = await fetchCommData(sel.id);
+  if (!data) {
+    display.innerHTML = '<div style="color:var(--text-muted);padding:12px;text-align:center">通信层未连接</div>';
+    return;
+  }
+
+  let html = '';
+
+  // Build combined message list: received + sent, sorted by timestamp
+  const received = (data.mailbox?.messages || []).map(m => ({ ...m, _dir: 'in' }));
+  const sent = (data.sent?.messages || []).map(m => ({ ...m, _dir: 'out' }));
+  const allMsgs = [...received, ...sent].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+  if (allMsgs.length > 0) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;padding:4px 0;border-bottom:1px solid var(--border)">💬 通信记录 (' + allMsgs.length + ' 条)</div>';
+    for (const msg of allMsgs) {
+      const icon = messageTypeIcons[msg.msg_type] || '💬';
+      const isSent = msg._dir === 'out';
+      const displayName = isSent
+        ? (sessions.find(s => s.id === msg.to_agent)?.name || msg.to_agent?.slice(0, 8) || '全体')
+        : (msg.from_agent === '🌍' ? '🌍 世界'
+          : (sessions.find(s => s.id === msg.from_agent)?.name || msg.from_agent?.slice(0, 8) || '?'));
+      const time = new Date(msg.timestamp * 1000).toLocaleTimeString();
+      const text = msg.content?.text || msg.content?.statement || JSON.stringify(msg.content);
+      const roomInfo = msg.world_room ? ' @' + msg.world_room : '';
+      const typeLabel = msg.msg_type;
+      // Sent messages: green border-left, Received: blue border-left
+      const borderColor = isSent ? 'var(--green)' : 'var(--accent)';
+      const dirLabel = isSent ? '→' : '←';
+      const dirColor = isSent ? 'var(--green)' : 'var(--accent)';
+
+      html += `<div style="margin-bottom:6px;padding:6px 8px;border:1px solid var(--border);border-left:3px solid ${borderColor};border-radius:6px;background:var(--bg-card)">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:3px">
+          <span style="font-weight:600">${icon}</span>
+          <span style="color:${dirColor};font-weight:600;font-size:11px">${dirLabel}</span>
+          <span style="color:var(--orange);font-weight:500;font-size:12px">${escapeHTML(displayName)}</span>
+          <span style="font-size:10px;color:var(--text-muted)">${time}</span>
+          <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--bg-input);color:var(--text-secondary)">${typeLabel}</span>
+          <span style="font-size:10px;color:var(--text-muted)">${roomInfo}</span>
+        </div>
+        <div style="color:var(--text-primary);font-size:12px;padding-left:4px">${escapeHTML(text)}</div>
+      </div>`;
+    }
+  } else {
+    html += '<div style="font-size:11px;color:var(--text-muted);padding:8px;text-align:center">📭 暂无通信记录</div>';
+  }
+
+  // World events section
+  const events = data.events?.events || [];
+  if (events.length > 0) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:12px;margin-bottom:6px;padding:4px 0;border-bottom:1px solid var(--border)">🌍 世界事件 (' + events.length + ' 条)</div>';
+    for (const ev of events) {
+      const content = ev.content?.text || ev.content?.event_type || '';
+      const room = ev.room || '';
+      const tick = ev.tick || 0;
+      const source = ev.source || '?';
+
+      html += `<div style="margin-bottom:4px;padding:4px 8px;background:var(--bg-input);border-radius:4px;font-size:11px">
+        <span style="color:var(--text-muted)">[${tick}]</span>
+        ${room ? '<span style="color:var(--cyan)">@' + escapeHTML(room) + '</span>' : ''}
+        <span style="color:var(--text-primary)">${escapeHTML(content)}</span>
+        <span style="color:var(--text-muted);font-size:10px"> — 源: ${escapeHTML(source)}</span>
+      </div>`;
+    }
+  }
+
+  // Shared knowledge section
+  try {
+    const skRes = await api('GET', '/api/shared-knowledge');
+    const entries = skRes.entries || [];
+    if (entries.length > 0) {
+      html += '<div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:12px;margin-bottom:6px;padding:4px 0;border-bottom:1px solid var(--border)">📚 公共知识 (' + entries.length + ' 条)</div>';
+      for (const e of entries) {
+        html += `<div style="margin-bottom:4px;padding:4px 8px;background:var(--bg-input);border-radius:4px;font-size:11px">
+          <span style="color:var(--green)">✓</span>
+          <span style="color:var(--text-secondary)">[${escapeHTML(e.domain || 'general')}]</span>
+          <span style="color:var(--text-primary)">${escapeHTML(e.statement)}</span>
+          <span style="color:var(--text-muted);font-size:10px"> conf:${e.confidence} · ${e.support_count} agents</span>
+        </div>`;
+      }
+    }
+  } catch (e) {}
+
+  if (!html) {
+    html = '<div style="color:var(--text-muted);padding:12px;text-align:center">暂无通信数据</div>';
+  }
+
+  display.innerHTML = html;
+}
+
+// ===== Refresh State =====
+async function refreshState() {
+  if (!selectedSessionId) return;
+  try {
+    const res = await api('GET', '/api/state/' + selectedSessionId);
+    updateStateBar(res.state, res.round, res.fold_count, res.history_count);
+    // Update session data (note: /api/state doesn't return drives)
+    const s = sessions.find(x => x.id === selectedSessionId);
+    if (s) {
+      s.round = res.round;
+      s.state = res.state;
+    }
+    renderAgentList();
+  } catch (e) {
+    if (e.message.includes('404')) {
+      toast('Session 已失效', 'error');
+      sessions = sessions.filter(s => s.id !== selectedSessionId);
+      selectedSessionId = sessions.length > 0 ? sessions[0].id : null;
+      renderAgentList();
+    }
+  }
+}
+
+function updateStateBar(state, round, fold, historyCount) {
+  // Always update selected agent name
+  const sel = getSelected();
+  $('disp-selected-name').textContent = sel ? sel.name : '—';
+  if (round !== undefined) $('disp-round').textContent = round;
+  if (fold !== undefined) $('disp-fold').textContent = fold;
+  if (historyCount !== undefined) $('disp-history').textContent = historyCount;
+  if (state) {
+    $('disp-topic').textContent = state.topic || '—';
+    $('disp-belief').textContent = state.belief || '—';
+    $('disp-goal').textContent = state.goal || '—';
+  }
+}
+
+// ===== World =====
+async function refreshWorld() {
+  // Update selected agent's context
+  if (selectedSessionId) {
+    try {
+      const res = await api('GET', '/api/world/context/' + selectedSessionId);
+      $('disp-room').textContent = res.position || '—';
+
+      // Update position in sessions list
+      const s = sessions.find(x => x.id === selectedSessionId);
+      if (s && res.position) { s.position = res.position; }
+
+      const ctx = res.context || '';
+      const lines = ctx.split('\n');
+      const descLines = [];
+      let objectsText = '';
+      let inventoryText = '';
+      let obsText = '';
+      let inObs = false;
+
+      for (const line of lines) {
+        if (line.includes('【环境感知】')) continue;
+        if (line.includes('【最近行动反馈】')) { inObs = true; continue; }
+        if (line.startsWith('  房间里可以看到：')) { objectsText = line.trim(); continue; }
+        if (line.startsWith('  墙上的笔记：')) continue;
+        if (line.startsWith('    「')) continue;
+        if (line.startsWith('  这里的其他人：')) continue;
+        if (line.startsWith('  背包：')) { inventoryText = line.trim(); continue; }
+        if (inObs) { if (line.trim()) obsText += line.trim() + '\n'; continue; }
+        if (line.startsWith('你现在在：')) continue;
+        if (line.startsWith('  出口：')) continue;
+        if (line.trim()) descLines.push(line.trim());
+      }
+
+      $('world-desc').textContent = descLines.join(' ').slice(0, 200);
+      $('world-objects').textContent = objectsText || '';
+      $('world-inventory').textContent = inventoryText || '';
+      $('world-observations').textContent = obsText ? '最近：' + obsText.slice(0, 100) : '';
+    } catch (e) {}
+  }
+}
+
+// ===== Clear Log =====
+function clearLog() {
+  const area = $('output-area');
+  area.innerHTML = '<div class="empty-state"><div class="icon">⚡</div><div class="text">日志已清空</div></div>';
+}
+
+// ===== Periodic refresh =====
+setInterval(() => {
+  if (sessions.length > 0 && !busy && selectedSessionId) {
+    refreshAllAgents();
+    if (!autoThinking) refreshWorld();
+  }
+}, 3000);
+
+// ===== Keyboard shortcut =====
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (sessions.length === 0) createAgent();
+    else doStep();
+  }
+});
+
+// ===== Delegated clicks for agent list (more robust than inline onclick) =====
+document.getElementById('agent-list').addEventListener('click', function(e) {
+  // Find the agent-item ancestor
+  let target = e.target;
+  while (target && target !== this) {
+    // Check for data attributes on the clicked element or its ancestor
+    const agentItem = target.closest('.agent-item');
+    if (agentItem) {
+      const agentId = agentItem.getAttribute('data-agent-id');
+      if (agentId) {
+        selectAgent(agentId);
+        e.stopPropagation();
+        return;
+      }
+    }
+    // Toggle state JSON
+    if (target.hasAttribute('data-toggle-state')) {
+      const id = target.getAttribute('data-toggle-state');
+      toggleState(id);
+      e.stopPropagation();
+      return;
+    }
+    // Fetch causal chain
+    if (target.hasAttribute('data-causal-chain')) {
+      const id = target.getAttribute('data-causal-chain');
+      fetchAndShowCausalChain(id);
+      e.stopPropagation();
+      return;
+    }
+    target = target.parentElement;
+  }
+});
+</script>
+</body>
+</html>

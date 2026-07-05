@@ -1,0 +1,98 @@
+{
+  "id": "d013c8d1f63d",
+  "state": {
+    "topic": "consciousness_and_causality",
+    "belief": "consciousness_may_be_self_observation_node",
+    "goal": "seek_origin"
+  },
+  "state_compressed": {},
+  "identity_anchor": {
+    "identity": "unknown",
+    "core_goal": "observe_current_environment",
+    "worldview": null,
+    "stable_values": [],
+    "recent_reflection": null,
+    "confidence": 0.0
+  },
+  "drives": {
+    "curiosity": 0.5,
+    "boredom": 0.1,
+    "belonging": 0.7
+  },
+  "thought_pool": [],
+  "self_modifications": {},
+  "causal_chain": [],
+  "hypotheses": [],
+  "evidence": [],
+  "cognitive": {
+    "self_model": {
+      "identity": "unknown",
+      "beliefs": {},
+      "goals": [],
+      "drives": {
+        "curiosity": 0.5,
+        "boredom": 0.1,
+        "belonging": 0.7
+      },
+      "confidence": 0.0,
+      "recent_changes": [],
+      "personality": {},
+      "identity_anchor": {
+        "identity": "unknown",
+        "core_goal": "observe_current_environment",
+        "worldview": null,
+        "stable_values": [],
+        "recent_reflection": null,
+        "confidence": 0.0
+      }
+    },
+    "world_model_cog": {
+      "objects": {},
+      "places": {},
+      "agents_seen": {},
+      "events": [],
+      "environment_rules": [],
+      "predictions": []
+    },
+    "social_model": {},
+    "knowledge_model": {
+      "hypotheses": [],
+      "evidence": [],
+      "facts": {},
+      "open_questions": [],
+      "experiments": []
+    },
+    "theory_of_mind": {},
+    "working_memory": {
+      "current_focus": "",
+      "active_question": "",
+      "relevant_evidence": [],
+      "unresolved": [],
+      "recent_reasoning": []
+    }
+  },
+  "experiences": [],
+  "identity_maturity": 0.0,
+  "identity_deltas": [],
+  "round": 1,
+  "rounds_since_human": 0,
+  "fold_count": 0,
+  "status": "running",
+  "interactions": [],
+  "history": [
+    {
+      "state": {
+        "topic": "consciousness_and_causality",
+        "belief": "consciousness_may_be_self_observation_node",
+        "goal": "seek_origin"
+      },
+      "cause": "init",
+      "round": 1
+    }
+  ],
+  "introspections": [],
+  "statistics": {},
+  "created_at": 1783266091.56981,
+  "updated_at": 1783266091.569843,
+  "version": 5
+}
