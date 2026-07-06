@@ -7,11 +7,30 @@ All agent logic is delegated to RuntimeEngine via web/routes.py.
 
 from __future__ import annotations
 
+import sys
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from web.routes import router
+from web.routes import router, save_all_sessions, load_all_sessions
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: restore sessions. Shutdown: save all sessions."""
+    # ── Startup ──
+    restored = load_all_sessions()
+    if restored:
+        print(f"  [Lifecycle] Restored {restored} session(s)", file=sys.stderr)
+    else:
+        print(f"  [Lifecycle] No saved sessions to restore", file=sys.stderr)
+    yield
+    # ── Shutdown ──
+    save_all_sessions()
+    print(f"  [Lifecycle] All sessions saved", file=sys.stderr)
+
 
 app = FastAPI(
     title="Agent Runtime Service",
@@ -19,6 +38,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Allow cross-origin requests (for local dev / future gateway)

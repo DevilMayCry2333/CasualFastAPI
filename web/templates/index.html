@@ -78,7 +78,8 @@
   /* ===== Left Panel ===== */
   #left-panel {
     width: 340px;
-    min-width: 340px;
+    min-width: 200px;
+    max-width: 600px;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border);
     display: flex;
@@ -86,6 +87,22 @@
     padding: 20px;
     gap: 16px;
     overflow-y: auto;
+    flex-shrink: 0;
+    user-select: none;
+  }
+
+  /* ===== Resize Handle ===== */
+  #resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    flex-shrink: 0;
+    transition: background 0.15s;
+    position: relative;
+    z-index: 10;
+  }
+  #resize-handle:hover, #resize-handle.active {
+    background: var(--accent);
   }
 
   #left-panel h2 {
@@ -183,16 +200,6 @@
 
   .btn-full { width: 100%; }
 
-  .status-indicator {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-  }
   .status-dot {
     width: 8px;
     height: 8px;
@@ -247,9 +254,28 @@
     padding: 12px 20px;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border);
-    max-height: 200px;
-    overflow: auto;
+    overflow: hidden;
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 60px;
+    max-height: 60vh;
+  }
+  #state-json-panel .tab-content-pane {
+    overflow-y: auto;
+    flex-shrink: 1;
+  }
+
+  /* Resize handle between tabs and actions */
+  #resize-h-handle {
+    height: 4px;
+    cursor: row-resize;
+    background: transparent;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  #resize-h-handle:hover, #resize-h-handle.active {
+    background: var(--accent);
   }
   #state-json-panel pre {
     font-family: var(--font-mono);
@@ -280,11 +306,25 @@
   /* Output */
   #output-area {
     flex: 1;
+    min-height: 80px;
+    max-height: calc(100vh - 280px);
     overflow-y: auto;
     padding: 16px 20px;
     font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.6;
+  }
+
+  /* Vertical Resize Handle */
+  #resize-v-handle {
+    height: 4px;
+    cursor: row-resize;
+    background: transparent;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  #resize-v-handle:hover, #resize-v-handle.active {
+    background: var(--accent);
   }
 
   .log-entry {
@@ -497,42 +537,13 @@
   </button>
 
   <h2 style="margin-top:8px">Agent 列表</h2>
-  <div id="agent-list">
+  <div id="agent-list" style="flex:1;overflow-y:auto;min-height:100px">
     <div style="font-size:12px;color:var(--text-muted);padding:8px 0">暂无 Agent，点击上方创建</div>
   </div>
-
-  <div class="status-indicator">
-    <span class="status-dot disconnected" id="status-dot"></span>
-    <span id="status-text">未连接</span>
-    <span style="flex:1"></span>
-    <span id="selected-agent-name" style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)"></span>
-  </div>
-
-  <div style="flex:1"></div>
-
-  <!-- World Panel -->
-  <div id="world-panel" style="display:none">
-    <h2>🌍 微光之境 <span id="world-info" style="font-size:11px;color:var(--text-muted);font-weight:400"></span></h2>
-
-    <div id="world-room" class="form-group" style="gap:2px">
-      <div style="font-size:12px;color:var(--text-secondary)">当前位置</div>
-      <div id="disp-room" style="font-size:14px;font-weight:600;color:var(--cyan)">—</div>
-    </div>
-    <div id="world-desc" style="font-size:12px;color:var(--text-secondary);line-height:1.5;padding:6px 0"></div>
-    <div id="world-objects" style="font-size:12px;color:var(--green);padding:2px 0"></div>
-    <div id="world-inventory" style="font-size:12px;color:var(--purple);padding:2px 0"></div>
-    <div id="world-observations" style="font-size:11px;color:var(--text-muted);padding:4px 0;border-top:1px solid var(--border);margin-top:4px"></div>
-
-    <div id="world-agents" style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
-      <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">所有 Agent</div>
-      <div id="world-agent-list" style="font-size:11px;color:var(--text-muted)">—</div>
-    </div>
-  </div>
-
-  <button id="btn-disconnect" class="btn btn-outline btn-sm" style="display:none" onclick="disconnectAll()">
-    ⏻ 断开所有
-  </button>
 </div>
+
+<!-- Resize Handle -->
+<div id="resize-handle"></div>
 
 <!-- Right Panel -->
 <div id="right-panel">
@@ -555,32 +566,32 @@
       <span id="tab-comm" style="cursor:pointer;color:var(--text-muted)" onclick="switchPanelTab('comm')">💬 通信</span>
       <span id="tab-timeline" style="cursor:pointer;color:var(--text-muted)" onclick="switchPanelTab('timeline')">📋 Timeline</span>
     </div>
-    <div id="panel-state" style="max-height:300px;overflow-y:auto">
+    <div id="panel-state" style="overflow-y:auto" class="tab-content-pane">
       <div style="color:var(--text-muted);font-size:12px;padding:8px;text-align:center">创建 Agent 后查看所有状态</div>
     </div>
-    <div id="panel-causal" style="display:none;max-height:300px;overflow-y:auto;font-family:var(--font-mono);font-size:11px;line-height:1.5">
+    <div id="panel-causal" style="display:none;font-family:var(--font-mono);font-size:11px;line-height:1.5" class="tab-content-pane">
       <div id="causal-chain-display" style="color:var(--text-muted)">选择 Agent 后查看因果链</div>
     </div>
-    <div id="panel-comm" style="display:none;max-height:300px;overflow-y:auto;font-family:var(--font-sans);font-size:12px;line-height:1.5">
+    <div id="panel-comm" style="display:none;font-family:var(--font-sans);font-size:12px;line-height:1.5" class="tab-content-pane">
       <div id="comm-display" style="color:var(--text-muted);padding:12px;text-align:center">选择 Agent 后查看通信记录</div>
     </div>
-    <div id="panel-timeline" style="display:none;max-height:300px;overflow-y:auto;font-family:var(--font-sans);font-size:12px;line-height:1.5">
+    <div id="panel-timeline" style="display:none;font-family:var(--font-sans);font-size:12px;line-height:1.5" class="tab-content-pane">
       <div id="timeline-display" style="padding:4px 0">
         <div style="color:var(--text-muted);padding:12px;text-align:center">连接 Agent 后自动显示执行轨迹</div>
       </div>
     </div>
   </div>
 
+  <!-- Resize Handle (tabs height) -->
+  <div id="resize-h-handle"></div>
+
   <!-- Actions -->
   <div id="actions">
     <button class="btn btn-outline btn-sm" disabled onclick="doStep()">⟳ Step</button>
     <button class="btn btn-green btn-sm" disabled onclick="toggleAuto()" id="btn-auto">▶ Auto</button>
-    <button class="btn btn-outline btn-sm" disabled onclick="doFold()">⬡ Fold</button>
-    <button class="btn btn-outline btn-sm" disabled onclick="doTranslate()">🌐 Translate</button>
+    <button class="btn btn-outline btn-sm" onclick="clearLog()">🗑️ Clear</button>
     <button class="btn btn-outline btn-sm" disabled onclick="doSnapshot()">💾 Snapshot</button>
     <button class="btn btn-outline btn-sm" disabled onclick="doRestore()" id="btn-restore">📂 Restore</button>
-    <button class="btn btn-outline btn-sm" disabled onclick="refreshState()">🔄 Refresh</button>
-    <button class="btn btn-outline btn-sm" onclick="clearLog()">🗑️ Clear</button>
   </div>
 
   <!-- Output -->
@@ -590,6 +601,9 @@
       <div class="text">连接到 LLM 后开始使用</div>
     </div>
   </div>
+
+  <!-- Vertical Resize Handle -->
+  <div id="resize-v-handle"></div>
 
   <!-- Input -->
   <div id="input-area">
@@ -607,7 +621,11 @@ let busy = false;
 let autoThinking = false;
 let autoInterval = null;
 let autoCount = 0;
-const AUTO_INTERVAL_MS = 5000;
+const AUTO_INTERVAL_MS = 15000;
+const AUTO_MIN_STEP_GAP_MS = 10000;   // 请求完成 → 10s 空闲 → 下一次请求开始
+let agentLastStepTime = {};           // session_id → timestamp (per-agent tracking)
+let lastGlobalStepTime = 0;           // global timestamp — ANY agent's last request
+let autoAgentIndex = 0;               // round-robin: which agent to step next
 
 const $ = id => document.getElementById(id);
 const statusDot = $('status-dot');
@@ -654,20 +672,19 @@ function escapeHTML(s) {
 function getSelected() { return sessions.find(s => s.id === selectedSessionId) || null; }
 
 function renderAgentList() {
+  // Deduplicate sessions by id
+  const seen = new Set();
+  sessions = sessions.filter(s => {
+    if (seen.has(s.id)) return false;
+    seen.add(s.id);
+    return true;
+  });
   const list = $('agent-list');
   if (sessions.length === 0) {
-    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">暂无 Agent，点击上方创建</div>';
-    statusDot.className = 'status-dot disconnected';
-    statusText.textContent = '未连接';
-    $('selected-agent-name').textContent = '';
-    $('world-panel').style.display = 'none';
-    $('btn-disconnect').style.display = 'none';
-    $('btn-auto').disabled = true;
+    list.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px 0">暂无 Agent，点击上方创建</div>'
     return;
   }
 
-  $('world-panel').style.display = '';
-  $('btn-disconnect').style.display = '';
   $('btn-auto').disabled = false;
 
   function driveBar(drives, key) {
@@ -740,9 +757,8 @@ function renderAgentList() {
 
   const sel = getSelected();
   if (sel) {
-    statusDot.className = 'status-dot connected';
-    statusText.textContent = `已选择 ${sel.name}`;
-    $('selected-agent-name').textContent = sel.name;
+    if (statusDot) statusDot.className = 'status-dot connected';
+    if (statusText) statusText.textContent = `已选择 ${sel.name}`;
   }
 }
 
@@ -800,9 +816,11 @@ async function createAgent() {
     sessions.push({ id: sid, name, drives: {}, position: '?' });
     selectedSessionId = sid;
     renderAgentList();
+    connectTimeline(sid);  // Connect timeline WebSocket immediately
     addLog({ type: 'system', title: `✨ ${name} 已诞生`, body: `Session: ${sid}\nModel: ${req.model}` });
     toast(`${name} 创建成功`, 'success');
     refreshAllAgents();
+    doStep();  // 立即执行第一步思考
     refreshWorld();
   } catch (e) {
     toast('创建失败: ' + e.message, 'error');
@@ -846,12 +864,12 @@ function setBusy(b) {
   $('chat-input').disabled = b || !hasSel;
   $('btn-create-agent').disabled = b;
   if (b) {
-    statusDot.className = 'status-dot running';
-    statusText.textContent = '运行中…';
+    if (statusDot) statusDot.className = 'status-dot running';
+    if (statusText) statusText.textContent = '运行中…';
   } else if (hasSel) {
     const sel = getSelected();
-    statusDot.className = 'status-dot connected';
-    statusText.textContent = sel ? `已选择 ${sel.name}` : '已连接';
+    if (statusDot) statusDot.className = 'status-dot connected';
+    if (statusText) statusText.textContent = sel ? `已选择 ${sel.name}` : '已连接';
   }
 }
 
@@ -897,6 +915,18 @@ async function api(method, path, body) {
 }
 
 // ===== Multi-Agent Auto Think =====
+function stopAuto() {
+  if (!autoThinking) return;
+  autoThinking = false;
+  if (autoInterval) {
+    clearInterval(autoInterval);
+    autoInterval = null;
+  }
+  $('btn-auto').textContent = '▶ Auto';
+  $('btn-auto').className = 'btn btn-green btn-sm';
+  $('btn-create-agent').disabled = false;
+}
+
 function toggleAuto() {
   const btn = $('btn-auto');
   if (autoThinking) {
@@ -915,164 +945,112 @@ function toggleAuto() {
     // Disable creation during auto
     $('btn-create-agent').disabled = true;
     doAutoRound();
-  }
-}
-
-async function doAutoRound() {
-  if (!autoThinking || sessions.length === 0) { stopAuto(); return; }
-
-  autoCount++;
-  const agentList = [...sessions];
-  for (let i = 0; i < agentList.length; i++) {
-    if (!autoThinking) break;
-    const s = agentList[i];
-    try {
-      statusDot.className = 'status-dot running';
-      statusText.textContent = `Auto: ${s.name} 思考中...`;
-
-      const res = await api('POST', '/api/step', { session_id: s.id });
-      s.drives = res.drives || s.drives;
-      s.round = res.round;
-      s.state = res.state;
-      s.status = 'idle';
-
-      // Log inter-agent communication during auto
-      if (res.messages_sent > 0) {
-        addLog({
-          type: 'system',
-          title: '💬 ' + s.name + ' 发送了 ' + res.messages_sent + ' 条消息',
-          body: (res.world_model_updates?.send_messages || []).map(m =>
-            '→ ' + (m.to_agent === '*' ? '全体' : m.to_agent?.slice(0,8)) + ': '
-            + (m.content?.text || m.content?.statement || JSON.stringify(m))
-          ).join('\n'),
-        });
-      }
-      if (res.mailbox_unread > 0) {
-        s.mailbox_count = res.mailbox_unread;
-      }
-
-      // If this is the selected agent, update the right panel
-      if (s.id === selectedSessionId) {
-        updateStateBar(res.state, res.round);
-      }
-
-      renderAgentList();
-      // Brief pause between agents to avoid overwhelming the API
-      await new Promise(r => setTimeout(r, 300));
-
-    } catch (e) {
-      addLog({ type: 'error', title: `❌ ${s.name} 思考失败`, body: e.message });
-    }
-  }
-
-  // Refresh world + all agent data + causal chain + communication
-  refreshAllAgents();
-  refreshWorld();
-  renderCausalChain();
-  // If comm tab is active, refresh it
-  if ($('panel-comm').style.display !== 'none') {
-    renderCommPanel();
-  }
-
-  if (autoThinking) {
-    statusDot.className = 'status-dot connected';
-    const sel = getSelected();
-    statusText.textContent = sel ? `Auto #${autoCount} 完成 (${agentList.length} agents)` : '已连接';
-    // Schedule next round — chained setTimeout prevents overlap
-    clearTimeout(autoInterval);
-    autoInterval = setTimeout(() => {
+    autoInterval = setInterval(function() {
       if (autoThinking) doAutoRound();
     }, AUTO_INTERVAL_MS);
   }
 }
 
-function stopAuto() {
-  if (!autoThinking) return;
-  autoThinking = false;
-  if (autoInterval) { clearTimeout(autoInterval); autoInterval = null; }
-  const btn = $('btn-auto');
-  btn.textContent = '▶ Auto';
-  btn.className = 'btn btn-green btn-sm';
-  $('btn-create-agent').disabled = false;
-  setBusy(false);
-  $('btn-auto').disabled = sessions.length === 0;
-}
+async function doAutoRound() {
+  if (!autoThinking || sessions.length === 0) { stopAuto(); return; }
+  autoCount++;
 
-// ===== Refresh All Agents =====
-async function refreshAllAgents() {
-  if (sessions.length === 0) return;
+  // Skip if already busy (a step is still in progress)
+  if (busy) return;
+
+  // Rate limit: check time since last request COMPLETED
+  const sinceLast = Date.now() - lastGlobalStepTime;
+  if (sinceLast < AUTO_MIN_STEP_GAP_MS) {
+    return;  // Wait for next interval
+  }
+
+  // Round-robin: step ONE agent per round so all get fair turns
+  const agentList = [...sessions];
+  if (agentList.length === 0) return;
+  autoAgentIndex = autoAgentIndex % agentList.length;
+  const s = agentList[autoAgentIndex];
+  autoAgentIndex = (autoAgentIndex + 1) % agentList.length;
+
   try {
-    const res = await api('GET', '/api/sessions');
-    // Update session data from server
-    for (const serverS of res.sessions) {
-      const localS = sessions.find(s => s.id === serverS.id);
-      if (localS) {
-        localS.drives = serverS.drives || {};
-        localS.round = serverS.round || 0;
-        localS.state = serverS.state || {};
-        localS.position = serverS.position || '?';
-        localS.status = serverS.status || '';
-        localS.thought_pool = serverS.thought_pool || [];
-        localS.identity_anchor = serverS.identity_anchor || null;
-        localS.causal_chain = serverS.causal_chain_last || [];
-        localS.causal_chain_count = serverS.causal_chain_count || 0;
-        localS.mailbox_count = serverS.mailbox_count || 0;
-        localS.shared_knowledge_count = serverS.shared_knowledge_count || 0;
+    busy = true;  // 标记繁忙防止并发
+    if (statusDot) statusDot.className = 'status-dot running';
+    if (statusText) statusText.textContent = `Auto: ${s.name} 思考中...`;
+
+    const res = await api('POST', '/api/step', { session_id: s.id });
+    agentLastStepTime[s.id] = Date.now();
+    lastGlobalStepTime = Date.now();  // 请求完成才记时，之后等10s再发起下一个
+
+    if (res.type === 'waiting_human') {
+      const question = res.question || '(问题为空)';
+      const reason = res.reason || '请回答以上问题';
+      addLog({ type: 'system', title: '❓ ' + s.name + ' 提问: ' + question.slice(0, 80), body: question + (reason ? '\n原因: ' + reason : '') });
+      if (s.id === selectedSessionId) {
+        addLog({ type: 'system', title: '✏️ 输入回答给 ' + s.name,
+          html: '<div style="display:flex;gap:6px;padding:4px 0">' +
+            '<input id="human-answer-input" type="text" style="flex:1;background:var(--bg-input);border:1px solid var(--orange);border-radius:4px;padding:8px 10px;color:var(--text-primary);font-size:13px;outline:none" placeholder="输入回答..." onkeydown="if(event.key===\'Enter\')submitHumanAnswer()">' +
+            '<button class="btn btn-primary" onclick="submitHumanAnswer()" style="white-space:nowrap">回答</button></div>' });
       }
+      toast(s.name + ' 提出了问题', 'info');
     }
 
-    // Update selected agent's state bar
-    if (selectedSessionId) {
-      const sel = sessions.find(s => s.id === selectedSessionId);
-      if (sel && sel.state) {
-        updateStateBar(sel.state, sel.round);
-      }
+    s.round = res.round;
+    s.state = res.state;
+    s.status = 'idle';
+
+    if (res.messages_sent > 0) {
+      addLog({ type: 'system', title: '💬 ' + s.name + ' 发送了 ' + res.messages_sent + ' 条消息',
+        body: (res.world_model_updates?.send_messages || []).map(function(m) {
+          return '→ ' + (m.to_agent === '*' ? '全体' : (m.to_agent || '').slice(0,8)) + ': ' + (m.content?.text || m.content?.statement || JSON.stringify(m));
+        }).join('\n') });
     }
 
-    // Update world info
-    if (res.world) {
-      const w = res.world;
-      const info = $('world-info');
-      info.textContent = `${w.rooms} rooms · ${w.agents} agents · tick ${w.meta?.tick || 0}`;
-      if (w.agent_positions) {
-        const agentList = $('world-agent-list');
-        const names = sessions.reduce((acc, s) => { acc[s.id] = s.name; return acc; }, {});
-        const entries = Object.entries(w.agent_positions);
-        if (entries.length === 0) {
-          agentList.textContent = '—';
-        } else {
-          agentList.innerHTML = entries.map(([sid, pos]) => {
-            const name = names[sid] || sid.slice(0, 8);
-            const isSelected = sid === selectedSessionId;
-            return `<div style="padding:2px 0 ${isSelected ? ';color:var(--accent);font-weight:600' : ''}">${isSelected ? '▸' : '·'} ${name} @ ${pos}</div>`;
-          }).join('');
-        }
-      }
+    if (s.id === selectedSessionId) {
+      updateStateBar(res.state, res.round);
+      renderCausalChain();
     }
-
     renderAgentList();
-    // Also update the multi-agent state display
     renderAllAgentStates();
+    // Refresh other agents' data from server in background (don't block display)
+    refreshAllAgents();
+
   } catch (e) {
-    // Silently fail on refresh errors
+    addLog({ type: 'error', title: `❌ ${s.name} 思考失败`, body: e.message });
+  } finally {
+    busy = false;  // 无论如何都释放繁忙标志
+  }
+
+  if (autoThinking) {
+    if (statusDot) statusDot.className = 'status-dot connected';
+    if (statusText) statusText.textContent = `Auto: 空闲中 (已执行 ${autoCount} 轮)`;
   }
 }
 
 // ===== Step =====
 async function doStep() {
   if (!selectedSessionId || busy) return;
+  // Global rate limit: at least 10s between any LLM request
+  const waitMs = AUTO_MIN_STEP_GAP_MS - (Date.now() - lastGlobalStepTime);
+  if (waitMs > 0) {
+    const remaining = Math.ceil(waitMs / 1000);
+    toast(`操作太频繁，请 ${remaining} 秒后再试`, 'error');
+    return;
+  }
   setBusy(true);
   try {
     const res = await api('POST', '/api/step', { session_id: selectedSessionId });
+    agentLastStepTime[selectedSessionId] = Date.now();
+    lastGlobalStepTime = Date.now();  // 请求完成后记时，之后等10s再发起下一个
 
     // ── Handle waiting_human (agent asked a question) ──
     if (res.type === 'waiting_human') {
+      const question = res.question || '(问题为空)';
+      const reason = res.reason || '请回答以上问题';
       addLog({
         type: 'system',
-        title: '❓ Agent 正在等待回答',
-        html: `<div style="padding:8px;background:var(--bg-card);border-radius:6px;border:1px solid var(--orange);margin:4px 0">
-          <div style="font-weight:600;color:var(--orange);margin-bottom:6px">❓ ${escapeHTML(res.question || '')}</div>
-          <div style="color:var(--text-muted);font-size:11px;margin-bottom:8px">${escapeHTML(res.reason || '请回答以上问题')}</div>
+        title: '❓ Agent 正在等待回答: ' + question.slice(0, 60),
+        html: `<div style="padding:10px 12px;background:var(--bg-card);border-radius:6px;border:1px solid var(--orange);margin:4px 0">
+          <div style="font-weight:600;color:var(--orange);margin-bottom:6px;font-size:14px">❓ ${escapeHTML(question)}</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${escapeHTML(reason)}</div>
           <div style="display:flex;gap:6px">
             <input id="human-answer-input" type="text" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text-primary);font-size:13px;outline:none" placeholder="输入回答..." onkeydown="if(event.key==='Enter')submitHumanAnswer()">
             <button class="btn btn-primary" onclick="submitHumanAnswer()" style="white-space:nowrap">回答</button>
@@ -1375,8 +1353,10 @@ function connectTimeline(sessionId) {
 
   tlSocket.onerror = () => {
     tlConnected = false;
-    if (display.children.length === 0) {
-      display.innerHTML = '<div style="font-size:10px;color:var(--red);padding:4px 8px">❌ WebSocket 连接失败</div>';
+    // Always show error, even if placeholder exists
+    const hasContent = display.children.length > 0 && !display.children[0].textContent.includes('连接 Agent');
+    if (!hasContent) {
+      display.innerHTML = '<div style="font-size:10px;color:var(--red);padding:4px 8px">❌ WebSocket 连接失败 — 可能服务器未运行或端口错误</div>';
     }
   };
 }
@@ -1520,6 +1500,13 @@ function appendTimelineEvent(event) {
 }
 
 function renderAllAgentStates() {
+  // Deduplicate sessions by id
+  const seen = new Set();
+  sessions = sessions.filter(s => {
+    if (seen.has(s.id)) return false;
+    seen.add(s.id);
+    return true;
+  });
   const panel = $('panel-state');
   if (!panel) return;
   if (sessions.length === 0) {
@@ -1647,16 +1634,11 @@ const messageTypeIcons = {
 
 async function fetchCommData(agentId) {
   if (!agentId) return null;
-  try {
-    const [mailboxRes, sentRes, eventsRes] = await Promise.all([
-      api('GET', '/api/mailbox/' + agentId + '?max_items=20'),
-      api('GET', '/api/sent-messages/' + agentId + '?max_items=20'),
-      api('GET', '/api/event-bus/' + agentId).catch(() => ({ events: [] })),
-    ]);
-    return { mailbox: mailboxRes, sent: sentRes, events: eventsRes };
-  } catch (e) {
-    return null;
-  }
+  // Fetch each independently so one failure doesn't block all data
+  const mailboxRes = await api('GET', '/api/mailbox/' + agentId + '?max_items=20').catch(() => ({ messages: [], count: 0 }));
+  const sentRes = await api('GET', '/api/sent-messages/' + agentId + '?max_items=20').catch(() => ({ messages: [], count: 0 }));
+  const eventsRes = await api('GET', '/api/event-bus/' + agentId).catch(() => ({ events: [] }));
+  return { mailbox: mailboxRes, sent: sentRes, events: eventsRes };
 }
 
 async function renderCommPanel() {
@@ -1757,6 +1739,35 @@ async function renderCommPanel() {
   }
 
   display.innerHTML = html;
+}
+
+// ===== Refresh All Agents (was accidentally deleted, restored) =====
+async function refreshAllAgents() {
+  if (sessions.length === 0) return;
+  try {
+    const res = await api('GET', '/api/sessions');
+    for (const serverS of res.sessions) {
+      const localS = sessions.find(s => s.id === serverS.id);
+      if (localS) {
+        localS.drives = serverS.drives || {};
+        localS.round = serverS.round || 0;
+        localS.state = serverS.state || {};
+        localS.position = serverS.position || '?';
+        localS.status = serverS.status || '';
+        localS.thought_pool = serverS.thought_pool || [];
+        localS.identity_anchor = serverS.identity_anchor || null;
+        localS.causal_chain = serverS.causal_chain_last || [];
+        localS.causal_chain_count = serverS.causal_chain_count || 0;
+        localS.mailbox_count = serverS.mailbox_count || 0;
+      }
+    }
+    if (selectedSessionId) {
+      const sel = sessions.find(s => s.id === selectedSessionId);
+      if (sel && sel.state) updateStateBar(sel.state, sel.round);
+    }
+    renderAgentList();
+    renderAllAgentStates();
+  } catch (e) { /* silently fail */ }
 }
 
 // ===== Refresh State =====
@@ -1893,6 +1904,118 @@ document.getElementById('agent-list').addEventListener('click', function(e) {
     target = target.parentElement;
   }
 });
+
+// ===== Resizable Left Panel =====
+(function() {
+  const handle = document.getElementById('resize-handle');
+  const panel = document.getElementById('left-panel');
+  if (!handle || !panel) return;
+  let startX, startWidth;
+
+  handle.addEventListener('mousedown', function(e) {
+    startX = e.clientX;
+    startWidth = panel.offsetWidth;
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onHMove);
+    document.addEventListener('mouseup', onHUp);
+  });
+
+  function onHMove(e) {
+    const diff = e.clientX - startX;
+    const newWidth = Math.max(200, Math.min(600, startWidth + diff));
+    panel.style.width = newWidth + 'px';
+  }
+
+  function onHUp() {
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onHMove);
+    document.removeEventListener('mouseup', onHUp);
+  }
+})();
+
+// ===== Resizable Output Area (vertical) =====
+(function() {
+  const handle = document.getElementById('resize-v-handle');
+  const output = document.getElementById('output-area');
+  if (!handle || !output) return;
+  let startY, startHeight;
+
+  handle.addEventListener('mousedown', function(e) {
+    startY = e.clientY;
+    startHeight = output.offsetHeight;
+    handle.classList.add('active');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onVMove);
+    document.addEventListener('mouseup', onVUp);
+  });
+
+  function onVMove(e) {
+    const diff = e.clientY - startY;
+    const newHeight = Math.max(60, Math.min(window.innerHeight - 300, startHeight + diff));
+    output.style.height = newHeight + 'px';
+    output.style.maxHeight = 'none';
+    output.style.flex = 'none';
+  }
+
+  function onVUp() {
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onVMove);
+    document.removeEventListener('mouseup', onVUp);
+  }
+
+  // Double-click to reset
+  handle.addEventListener('dblclick', function() {
+    output.style.height = '';
+    output.style.maxHeight = '';
+    output.style.flex = '';
+  });
+})();
+
+// ===== Resizable Tabs Panel (horizontal resize) =====
+(function() {
+  const handle = document.getElementById('resize-h-handle');
+  const panel = document.getElementById('state-json-panel');
+  if (!handle || !panel) return;
+  let startY, startHeight;
+
+  handle.addEventListener('mousedown', function(e) {
+    startY = e.clientY;
+    startHeight = panel.offsetHeight;
+    handle.classList.add('active');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onHMove);
+    document.addEventListener('mouseup', onHUp);
+  });
+
+  function onHMove(e) {
+    const diff = e.clientY - startY;
+    const newHeight = Math.max(60, Math.min(window.innerHeight * 0.6, startHeight + diff));
+    panel.style.height = newHeight + 'px';
+    panel.style.maxHeight = 'none';
+  }
+
+  function onHUp() {
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onHMove);
+    document.removeEventListener('mouseup', onHUp);
+  }
+
+  // Double-click to reset to auto height
+  handle.addEventListener('dblclick', function() {
+    panel.style.height = '';
+    panel.style.maxHeight = '60vh';
+  });
+})();
 </script>
 </body>
 </html>

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import glob
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -87,6 +88,66 @@ _agent_events = AgentEventBus()
 # Configured lazily on first /api/connect with mcp_tools config
 _action_executor = ActionExecutor()
 
+# ── Snapshot directory (auto-save/restore) ──
+SNAPSHOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sessions"))
+os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+
+
+def save_all_sessions() -> None:
+    """Save all sessions and their LLM configs to disk."""
+    for sid, engine in list(_engines.items()):
+        try:
+            session = engine.get_session(sid)
+            filepath = os.path.join(SNAPSHOT_DIR, f"{sid}.json")
+            engine.snapshot(sid, filepath=filepath)
+            # Also save LLM config for restoration
+            config_path = os.path.join(SNAPSHOT_DIR, f"{sid}.config.json")
+            with open(config_path, "w") as f:
+                json.dump({
+                    "api_url": engine._llm.api_url,
+                    "api_key": getattr(engine._llm, "api_key", ""),
+                    "model": engine._llm.model,
+                    "temperature": engine._llm.temperature,
+                    "max_tokens": engine._llm.max_tokens,
+                }, f)
+        except Exception as e:
+            print(f"  [AutoSave] Failed to save {sid[:8]}: {e}")
+
+
+def load_all_sessions() -> int:
+    """Load all saved sessions from disk. Returns count of restored sessions."""
+    count = 0
+    for cfg_path in glob.glob(os.path.join(SNAPSHOT_DIR, "*.config.json")):
+        sid = os.path.basename(cfg_path).replace(".config.json", "")
+        session_path = os.path.join(SNAPSHOT_DIR, f"{sid}.json")
+        if not os.path.exists(session_path):
+            continue
+        try:
+            with open(cfg_path) as f:
+                config = json.load(f)
+            llm_config = {
+                "api_url": config.get("api_url", "http://localhost:28000/v1/chat/completions"),
+                "api_key": config.get("api_key", ""),
+                "model": config.get("model", "deepseek-v4-flash"),
+                "temperature": config.get("temperature", 0.85),
+                "max_tokens": config.get("max_tokens", 4096),
+            }
+            engine = RuntimeEngine(
+                llm_config=llm_config, world=_world, auto_save=False,
+                communication=_communication, shared_knowledge=_shared_knowledge,
+                action_executor=_action_executor if _action_executor.is_initialized() else None,
+                event_bus=_agent_events,
+            )
+            session = engine.restore(session_path)
+            if session:
+                _engines[session.id] = engine
+                count += 1
+                print(f"  [AutoRestore] Restored {session.id[:8]} ({config.get('model', '?')})")
+        except Exception as e:
+            print(f"  [AutoRestore] Failed to restore {sid[:8]}: {e}")
+    return count
+
+
 # ── In-memory engine store ──
 # Key: session_id, Value: RuntimeEngine
 _engines: dict[str, RuntimeEngine] = {}
@@ -103,11 +164,6 @@ def _get_engine(session_id: str) -> RuntimeEngine:
     if engine is None:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     return engine
-
-
-def _cleanup_on_error(session_id: str) -> None:
-    """Remove engine from store if something went wrong."""
-    _engines.pop(session_id, None)
 
 
 # ── Page ──
@@ -207,9 +263,11 @@ async def step(req: SessionActionRequest):
             identity_anchor=result.get("identity_anchor"),
             state_compressed=result.get("state_compressed"),
             extra=result.get("extra"),
+            question=result.get("question", ""),
+            reason=result.get("reason", ""),
         )
     except Exception as e:
-        _cleanup_on_error(req.session_id)
+        # Session preserved despite error
         raise HTTPException(status_code=500, detail=f"Step failed: {e}")
 
 
@@ -237,7 +295,7 @@ async def chat(req: ChatRequest):
             state_compressed=result.get("state_compressed"),
         )
     except Exception as e:
-        _cleanup_on_error(req.session_id)
+        # Session preserved despite error
         raise HTTPException(status_code=500, detail=f"Chat failed: {e}")
 
 
@@ -294,7 +352,7 @@ async def fold(req: SessionActionRequest):
             round=result["round"],
         )
     except Exception as e:
-        _cleanup_on_error(req.session_id)
+        # Session preserved despite error
         raise HTTPException(status_code=500, detail=f"Fold failed: {e}")
 
 
@@ -832,7 +890,7 @@ async def submit_human_answer(req: HumanAnswerRequest):
         result = engine.continue_with_human_answer(req.session_id, req.answer)
         return result
     except Exception as e:
-        _cleanup_on_error(req.session_id)
+        # Session preserved despite error
         raise HTTPException(status_code=500, detail=str(e))
 
 

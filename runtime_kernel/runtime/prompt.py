@@ -278,6 +278,7 @@ class PromptBuilder:
         recent_experiences: Optional[list[Experience]] = None,
         introspections: Optional[list] = None,
         rounds_since_human: int = 0,
+        current_round: int = 0,
         history: Optional[list] = None,
         loop_detected: bool = False,
         hypothesis_context: str = "",
@@ -388,6 +389,11 @@ class PromptBuilder:
 
             # ── State (current) ──
             elif section == "state" and "state" not in added:
+                # Time context (compact: round + rounds since human)
+                time_parts = [f"第 {current_round + 1} 轮"]
+                if rounds_since_human > 0:
+                    time_parts.append(f"上次人类交互: {rounds_since_human} 轮前")
+                parts.append("【时间感知】" + " · ".join(time_parts))
                 # When showing state, include world model fields
                 state_display = state.to_dict_complete()
                 parts.append("当前状态：")
@@ -418,6 +424,7 @@ class PromptBuilder:
         history: Optional[list] = None,
         introspections: Optional[list] = None,
         rounds_since_human: int = 0,
+        current_round: int = 0,
         loop_detected: bool = False,
         hypothesis_context: str = "",
         evidence_context: str = "",
@@ -471,7 +478,7 @@ class PromptBuilder:
         parts = PromptBuilder._build_prompt_sections(
             order, state, identity_anchor, drives, thought_pool,
             env_context, memory_context, causal_context, None,
-            introspections, rounds_since_human, history, loop_detected,
+            introspections, rounds_since_human, current_round, history, loop_detected,
             hypothesis_context, evidence_context, world_model,
             mailbox_context, shared_knowledge_context, world_events_context,
             self_model_context, world_model_cog_context, social_model_context,
@@ -518,6 +525,7 @@ class PromptBuilder:
         history: Optional[list] = None,
         introspections: Optional[list] = None,
         loop_detected: bool = False,
+        current_round: int = 0,
         hypothesis_context: str = "",
         evidence_context: str = "",
         world_model: Optional[dict] = None,
@@ -543,7 +551,7 @@ class PromptBuilder:
         parts = PromptBuilder._build_prompt_sections(
             order, state, identity_anchor, drives, thought_pool,
             env_context, memory_context, causal_context, None,
-            introspections, 0, history, loop_detected,
+            introspections, 0, current_round, history, loop_detected,
             hypothesis_context, evidence_context, world_model,
             mailbox_context, shared_knowledge_context, world_events_context,
             self_model_context, world_model_cog_context, social_model_context,

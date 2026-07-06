@@ -82,6 +82,9 @@ class StepResponse(BaseModel):
     # Communication v3 fields
     messages_sent: int = 0
     mailbox_unread: int = 0
+    # Human interaction (waiting_human response — agent asks a question)
+    question: str = ""
+    reason: str = ""
 
 
 class ChatResponse(BaseModel):

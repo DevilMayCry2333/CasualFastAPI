@@ -421,6 +421,11 @@ class RuntimeEngine:
         session.set_status(SessionStatus.RUNNING)
         self._sessions[session.id] = session
 
+        # Emit 'init' event so Timeline has immediate content
+        self._emit_event(session.id, "planner", {
+            "decision": "Agent 已初始化，准备开始探索",
+        }, round=session.round)
+
         if self._auto_save:
             self._persistence.snapshot(session, self._auto_save_path)
 
@@ -878,7 +883,10 @@ class RuntimeEngine:
                 env_context=env_context_raw,
                 drives=session.drives,
                 world_model=session.world_model_cog,
-                uncertain_areas=[u.get("domain", str(u)) for u in session.state.get("uncertainties", [])],
+                uncertain_areas=[
+                    u.get("domain", str(u)) if isinstance(u, dict) else str(u)
+                    for u in session.state.get("uncertainties", [])
+                ],
                 recent_attended_events=[],  # TODO: track across steps
                 max_events=3,
             )
@@ -955,6 +963,7 @@ class RuntimeEngine:
             history=session.history,
             introspections=introspections,
             rounds_since_human=session.rounds_since_human,
+            current_round=session.round,
             loop_detected=loop_detected,
             hypothesis_context=hypothesis_context,
             evidence_context=evidence_context,
@@ -1622,6 +1631,18 @@ class RuntimeEngine:
         # 1. Process new evidence
         new_evidence = wm_updates.get("new_evidence", [])
         for ev_data in new_evidence:
+            # Guard: LLM may return strings instead of dicts
+            if not isinstance(ev_data, dict):
+                ev = session.evidence_manager.add_observation(
+                    statement=str(ev_data),
+                    source="observation",
+                    round_num=session.round,
+                )
+                step_evidence_ids.append(ev.id)
+                self._memory_manager.store_evidence(
+                    session_id=session.id, round_num=session.round, evidence=ev.to_dict(),
+                )
+                continue
             ev = session.evidence_manager.add_observation(
                 statement=ev_data.get("statement", ""),
                 source=ev_data.get("source", "observation"),
@@ -1642,6 +1663,9 @@ class RuntimeEngine:
         # 2. Process new hypotheses
         new_hypotheses = wm_updates.get("new_hypotheses", [])
         for hyp_data in new_hypotheses:
+            # Guard: LLM may return strings instead of dicts
+            if not isinstance(hyp_data, dict):
+                continue
             # Enforce max active hypotheses
             if len(session.hypothesis_manager.active_hypotheses) >= HYPOTHESIS_MAX_ACTIVE:
                 break
@@ -1674,6 +1698,8 @@ class RuntimeEngine:
         # 3. Process hypothesis updates (support/contradict)
         hyp_updates = wm_updates.get("hypothesis_updates", [])
         for update in hyp_updates:
+            if not isinstance(update, dict):
+                continue
             hyp_id = update.get("id", "")
             supports = update.get("supports", True)
 
@@ -1971,6 +1997,7 @@ class RuntimeEngine:
             history=session.history,
             introspections=introspections,
             loop_detected=loop_detected,
+            current_round=session.round,
             hypothesis_context=hypothesis_context,
             evidence_context=evidence_context,
             world_model=world_model,
