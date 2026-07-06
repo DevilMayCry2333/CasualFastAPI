@@ -938,6 +938,56 @@ async def get_multi_worlds(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Self-Driven Scientific Agent (SDSA) ──
+
+
+@router.get("/api/sdsa/status/{session_id}")
+async def get_sdsa_status(session_id: str):
+    """Get SDSA daemon loop status."""
+    engine = _get_engine(session_id)
+    try:
+        daemon = engine._sdsa_daemon
+        status = daemon.get_status() if daemon else {"running": False}
+        queue = engine._sdsa_queue.get_stats()
+        return {
+            "session_id": session_id,
+            "daemon": status,
+            "queue": queue,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/sdsa/history/{session_id}")
+async def get_sdsa_history(session_id: str):
+    """Get SDSA cycle history."""
+    engine = _get_engine(session_id)
+    try:
+        daemon = engine._sdsa_daemon
+        history = daemon.get_history() if daemon else []
+        return {
+            "session_id": session_id,
+            "cycles": history,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/sdsa/goals/{session_id}")
+async def get_sdsa_goals(session_id: str):
+    """Get SDSA research goals for a session."""
+    engine = _get_engine(session_id)
+    try:
+        session = engine.get_session(session_id)
+        goals = getattr(session, "_sdsa_goals", [])
+        return {
+            "session_id": session_id,
+            "goals": [g.to_dict() for g in goals],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Scientific Loop ──
 
 

@@ -87,6 +87,7 @@ from runtime_kernel.runtime.exploration import (
     MultiWorldSimulator,
     StochasticHypothesisGenerator,
 )
+from runtime_kernel.runtime.sdsa import AutonomousDaemonLoop, ExperimentQueue
 from runtime_kernel.runtime.prompt import PromptBuilder
 from runtime_kernel.runtime.scheduler import Scheduler
 from runtime_kernel.runtime.evolution import EvolutionEngine, RuntimeParameters
@@ -214,6 +215,10 @@ class RuntimeEngine:
         self._experiment_scheduler = ExperimentScheduler()
         self._multi_world = MultiWorldSimulator()
 
+        # SDSA Queue (created now, daemon loop created after _action_executor)
+        self._sdsa_queue = ExperimentQueue()
+        self._sdsa_daemon: Optional[AutonomousDaemonLoop] = None
+
         self._heartbeat = HeartbeatManager(
             callback=self._heartbeat_pulse,
             interval=heartbeat_interval,
@@ -256,6 +261,10 @@ class RuntimeEngine:
             action_executor=self._action_executor,
             interval=self._science_interval,
         )
+
+        # SDSA Daemon Loop (self-driven autonomous loop)
+        if self._core_validator:
+            self._init_sdsa_daemon()
 
         # Start heartbeat
         if enable_heartbeat:
@@ -2486,6 +2495,36 @@ class RuntimeEngine:
     def update_llm_config(self, **kwargs: Any) -> None:
         """Update LLM configuration at runtime."""
         self._llm.update_config(**kwargs)
+
+    # ── SDSA Daemon Loop ──
+
+    def _init_sdsa_daemon(self) -> None:
+        """Initialize and start the autonomous SDSA daemon loop.
+
+        The daemon runs in a background thread, continuously generating
+        research goals and executing experiments through the Core Layer.
+        """
+        self._sdsa_daemon = AutonomousDaemonLoop(
+            llm_callback=self._llm_complete_wrapper,
+            core_validator=self._core_validator,
+            causal_graph=self._causal_graph,
+            prob_wm=self._probabilistic_wm,
+            experiment_queue=self._sdsa_queue,
+            session_provider=self._sdsa_session_provider,
+            interval=60.0,         # Run cycle every 60 seconds
+            max_actions_per_cycle=3,
+            event_bus=self._event_bus,
+        )
+        self._sdsa_daemon.start()
+
+    def _sdsa_session_provider(self) -> Any:
+        """Return the first available session for the daemon loop."""
+        for sid in list(self._sessions.keys()):
+            try:
+                return self._sessions[sid]
+            except Exception:
+                continue
+        return None
 
     # ── LLM wrapper for sub-systems ──
 

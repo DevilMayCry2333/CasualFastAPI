@@ -54,6 +54,7 @@ from runtime_kernel.runtime.exploration import (
 )
 from runtime_kernel.runtime.cognitive import CausalGraph, ProbabilisticWorldModel
 from runtime_kernel.runtime.policy_engine import PolicyEngine, OutcomeEvaluator
+from runtime_kernel.runtime.sdsa import AutonomousDaemonLoop, ExperimentEntry, ExperimentQueue, ResearchGoal, SDSACycleResult
 from runtime_kernel.runtime.scientific import (
     CausalEdge,
     CycleSummary,
@@ -144,12 +145,17 @@ __all__ = [
     "AgentEvent",
     "ActionValidator",
     "AgentEventBus",
+    "AutonomousDaemonLoop",
     "Capability",
     "CausalGraph",
     "ExperimentScheduler",
     "MultiWorldSimulator",
     "ProbabilisticWorldModel",
     "SafetyRules",
+    "ExperimentEntry",
+    "ExperimentQueue",
+    "ResearchGoal",
+    "SDSACycleResult",
     "StochasticHypothesisGenerator",
     "CapabilityAdapter",
     "HumanAdapter",
