@@ -100,6 +100,21 @@ SYSTEM_PROMPT = """你是一个持续演化的认知系统。
 - 不要强制回复每一条消息。只有当你认为有信息价值时才回应。
 - 只有经过验证的观察才贡献为公共知识。
 - 公共知识需要多个 Agent 确认才能成为共识。
+
+【行动能力】
+你拥有多种能力（Capabilities）来作用于外部世界。
+当你需要外部信息时，使用 action 字段调用你的能力。
+
+action 格式：
+"action": {"capability": "Search", "operation": "web_search", "parameters": {"query": "..."}}
+
+能力执行结果（Observation）会在后续步骤中注入。
+你可以基于观察结果继续推理，也可以继续调用其他能力。
+
+规则：
+- 只在需要外部信息时才使用能力
+- 不要重复调用已获得结果的操作
+- 基于能力返回的观察更新你的世界模型
 """
 
 INTERRUPT_SYSTEM_PROMPT = """你是一个世界模型构建器，正在与一个人类交互。
@@ -418,6 +433,8 @@ class PromptBuilder:
         working_memory_context: str = "",
         perception_context: str = "",
         theory_of_mind_context: str = "",
+        # Tool context
+        capability_context: str = "",
     ) -> list[dict]:
         """Build prompt for an autonomous step (Cognitive Architecture).
 
@@ -462,17 +479,22 @@ class PromptBuilder:
             perception_context, theory_of_mind_context,
         )
 
-        # World Model instruction — seek evidence, test hypotheses
-        instruction = (
-            "\n基于以上信息，完成以下世界模型维护任务：\n"
-            "1. 寻找新证据——观察环境中有哪些新的信息\n"
-            "2. 验证已有假设——你的假设有新的支持或反驳吗？\n"
-            "3. 发现新的矛盾——是否有两条证据互相矛盾？\n"
-            "4. 提出新假设——根据新观察提出合理的假设\n"
-            "5. 修正世界模型——更新你关于世界的理解\n\n"
-            "输出因果力向量，包含所有可选字段。"
-            "只输出 JSON，不要解释。"
-        )
+        # Build instruction with optional tool context
+        instruction_parts = [
+            "\n基于以上信息，完成以下世界模型维护任务：",
+            "1. 寻找新证据——观察环境中有哪些新的信息",
+            "2. 验证已有假设——你的假设有新的支持或反驳吗？",
+            "3. 发现新的矛盾——是否有两条证据互相矛盾？",
+            "4. 提出新假设——根据新观察提出合理的假设",
+            "5. 修正世界模型——更新你关于世界的理解",
+        ]
+        if capability_context:
+            instruction_parts.append("")
+            instruction_parts.append(capability_context)
+        instruction_parts.append("")
+        instruction_parts.append("输出因果力向量，包含所有可选字段。")
+        instruction_parts.append("只输出 JSON，不要解释。")
+        instruction = "\n".join(instruction_parts)
         parts.append(instruction)
 
         return [
@@ -510,6 +532,8 @@ class PromptBuilder:
         working_memory_context: str = "",
         perception_context: str = "",
         theory_of_mind_context: str = "",
+        # Tool context
+        capability_context: str = "",
     ) -> list[dict]:
         """Build prompt for human interruption (Cognitive Architecture).
 
@@ -527,7 +551,7 @@ class PromptBuilder:
             perception_context, theory_of_mind_context,
         )
 
-        interrupt_prompt = PromptBuilder._build_interrupt_template(human_input)
+        interrupt_prompt = PromptBuilder._build_interrupt_template(human_input, capability_context=capability_context)
         parts.append(f"\n{interrupt_prompt}")
 
         return [
@@ -536,9 +560,9 @@ class PromptBuilder:
         ]
 
     @staticmethod
-    def _build_interrupt_template(human_input: str) -> str:
+    def _build_interrupt_template(human_input: str, capability_context: str = "") -> str:
         """Build the human interrupt instruction template."""
-        return f"""【人类提供了新信息】
+        parts = [f"""【人类提供了新信息】
 
 人类说：
 {human_input}
@@ -546,9 +570,10 @@ class PromptBuilder:
 判断这个信息：
 - 是新的世界证据吗？→ 纳入世界模型
 - 是对当前假设的反馈吗？→ 更新假设状态
-- 是无关信息吗？→ 忽略
-
-先用自然语言回复人类。
+- 是无关信息吗？→ 忽略"""]
+        if capability_context:
+            parts.append(f"\n{capability_context}\n")
+        parts.append("""先用自然语言回复人类。
 然后在回复末尾另起一行，输出 ===STATE=== 分隔符。
 在分隔符后输出新的状态 JSON（包含世界模型字段）。
 
@@ -557,10 +582,11 @@ class PromptBuilder:
 〔你的回复〕
 
 ===STATE===
-{{"topic": "...", "belief": "...", "goal": "...",
- "world_model": {{}}, "hypotheses": [],
+{"topic": "...", "belief": "...", "goal": "...",
+ "world_model": {}, "hypotheses": [],
  "evidence": [], "open_questions": [],
- "uncertainties": [], "confidence": 0.5}}"""
+ "uncertainties": [], "confidence": 0.5}""")
+        return "\n".join(parts)
 
     # ── Translate ──
 
@@ -599,4 +625,155 @@ class PromptBuilder:
         return [
             {"role": "system", "content": INTROSPECTION_SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
+        ]
+
+    # ── Tool Context & Continuation ──
+
+    @staticmethod
+    def build_capability_context(tools_info: list[dict]) -> str:
+        """Build tool descriptions section for prompt injection.
+
+        Args:
+            tools_info: List of tool dicts with name, description, parameters.
+
+        Returns a formatted string for the prompt.
+        """
+        if not tools_info:
+            return ""
+
+        parts = ["【可用工具】"]
+        for t in tools_info:
+            name = t.get("name", "unknown")
+            desc = t.get("description", "")
+            params = t.get("parameters", {})
+            props = params.get("properties", {})
+            param_desc = ", ".join(
+                f"{k}: {v.get('type', 'any')}"
+                for k, v in props.items()
+                if k != "name"
+            )
+            if param_desc:
+                parts.append(f"  {name}({param_desc}): {desc[:120]}")
+            else:
+                parts.append(f"  {name}: {desc[:120]}")
+
+        parts.append("")
+        parts.append(
+            "需要外部信息时，在输出中使用 tool_use 字段：\n"
+            '"tool_use": {"name": "web_search", "arguments": {"key": "value"}}'
+        )
+        return "\n".join(parts)
+
+    @staticmethod
+    def build_tool_continuation(
+        tool_results: list[dict],
+        capability_context: str = "",
+    ) -> list[dict]:
+        """Build a continuation prompt after tool execution.
+
+        The LLM called a tool, we executed it, and now we give the
+        results back so the LLM can continue reasoning.
+
+        Args:
+            tool_results: List of tool execution result dicts:
+                [{"name": str, "arguments": dict, "result": Any, "success": bool}, ...]
+            capability_context: The original tool descriptions (from build_capability_context).
+
+        Returns Message list for the continuation LLM call.
+        """
+        parts: list[str] = []
+
+        # Tool results section
+        parts.append("【工具执行结果】")
+        for tr in tool_results:
+            name = tr.get("name", "?")
+            args = tr.get("arguments", {})
+            success = tr.get("success", False)
+            result = tr.get("result", "")
+
+            args_str = ", ".join(f"{k}={v}" for k, v in args.items())
+            parts.append(f"  {name}({args_str})")
+
+            if success:
+                if isinstance(result, list):
+                    for item in result:
+                        parts.append(f"    {str(item)[:200]}")
+                else:
+                    parts.append(f"    {str(result)[:200]}")
+            else:
+                error = tr.get("error", "Unknown error")
+                parts.append(f"    ⚠ 错误: {str(error)[:200]}")
+            parts.append("")
+
+        # Available tools reminder (if any)
+        if capability_context:
+            parts.append(f"{capability_context}\n")
+
+        # Instruction
+        parts.append("基于以上工具返回结果，继续你的推理和世界模型维护。")
+        parts.append("如果你需要更多信息，可以再次使用工具。")
+        parts.append("如果信息已经足够，输出因果力向量更新状态。")
+        parts.append("只输出 JSON，不要解释。")
+
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(parts)},
+        ]
+
+    # ── Action System: Observation Continuation ──
+
+    @staticmethod
+    def build_observation_continuation(
+        observations: list[dict],
+        capability_context: str = "",
+    ) -> list[dict]:
+        """Build a continuation prompt after capability action execution.
+
+        The Planner produced an Action, ActionExecutor executed it,
+        and now the Observation is fed back so the Planner can continue.
+
+        Args:
+            observations: List of action execution observation dicts:
+                [{"capability": str, "operation": str, "parameters": dict,
+                  "result": Any, "success": bool, "error": str}, ...]
+            capability_context: Original capability descriptions from
+                                ActionExecutor.format_for_prompt().
+
+        Returns Message list for the continuation LLM call.
+        """
+        parts: list[str] = []
+
+        parts.append("【行动结果】")
+        for obs in observations:
+            cap = obs.get("capability", "?")
+            op = obs.get("operation", "?")
+            params = obs.get("parameters", {})
+            success = obs.get("success", False)
+            result = obs.get("result", "")
+
+            params_str = ", ".join(f"{k}={v}" for k, v in params.items())
+            parts.append(f"  {cap}.{op}({params_str})")
+
+            if success:
+                if isinstance(result, list):
+                    for item in result:
+                        parts.append(f"    {str(item)[:300]}")
+                else:
+                    parts.append(f"    {str(result)[:300]}")
+            else:
+                error = obs.get("error", "Unknown error")
+                parts.append(f"    ⚠ {str(error)[:200]}")
+            parts.append("")
+
+        if capability_context:
+            parts.append(f"{capability_context}\n")
+
+        parts.append("基于以上行动结果（Observation），继续你的推理和世界模型维护。")
+        parts.append("如果你需要更多信息，可以再次调用其他能力。")
+        parts.append("如果信息已经足够，输出因果力向量更新状态。")
+        parts.append("只输出 JSON，不要解释。")
+
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "\n".join(parts)},
         ]

@@ -128,6 +128,9 @@ class AgentSession:
         # Statistics (introspection data)
         self._statistics: dict[str, Any] = {}
 
+        # Human interaction: pending question (set when waiting for human answer)
+        self._pending_human_question: Optional[dict] = None
+
     # ── Read-only properties ──
 
     @property
@@ -286,6 +289,15 @@ class AgentSession:
     def set_status(self, status: SessionStatus) -> None:
         self._status = status
         self._updated_at = time.time()
+
+    @property
+    def pending_human_question(self) -> Optional[dict]:
+        """The question the agent is waiting for human to answer, if any."""
+        return self._pending_human_question
+
+    @pending_human_question.setter
+    def pending_human_question(self, value: Optional[dict]) -> None:
+        self._pending_human_question = value
 
     def update_state(self, state_dict: dict, cause: str = "self") -> dict:
         """Record a new state, log the transition, increment round.

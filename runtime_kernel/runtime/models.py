@@ -29,6 +29,7 @@ class SessionStatus(str, enum.Enum):
     INTERRUPTED = "interrupted"
     FOLDING = "folding"       # Deprecated: kept for backward compat
     REFLECTING = "reflecting"
+    WAITING_HUMAN = "waiting_human"  # Agent asked a question, waiting for answer
     IDLE = "idle"
     ERROR = "error"
     TERMINATED = "terminated"

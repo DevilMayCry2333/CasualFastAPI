@@ -11,27 +11,43 @@ No agent logic here. No prompt construction. No state parsing.
 
 from __future__ import annotations
 
+import json
 import os
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from runtime_kernel import (
+    Action,
+    ActionExecutor,
+    AgentEvent,
+    AgentEventBus,
     CommunicationManager,
+    HumanAdapter,
+    MCPConfig,
+    Observation,
     RuntimeEngine,
+    SearchAdapter,
     SharedKnowledge,
     VirtualEnvironment,
     SessionNotFoundError,
 )
 
 from web.schemas import (
+    ActionRequest,
+    ActionSystemStatusResponse,
+    CapabilitiesResponse,
+    CapabilityInfo,
     ChatRequest,
     ChatResponse,
     ConnectRequest,
     ConnectResponse,
     ErrorResponse,
     FoldResponse,
+    HumanAnswerRequest,
+    ObservationResponse,
+    OperationInfo,
+    PendingQuestionResponse,
     RestoreRequest,
     SendBroadcastRequest,
     SendMessageRequest,
@@ -62,6 +78,14 @@ _world.set_message_callback(
         _communication.send(from_agent, to_agent, "observation",
                           {"text": text}, tick, "", room)
 )
+
+# ── Shared AgentEventBus (Observability) ──
+# All agent events across all sessions flow through this bus
+_agent_events = AgentEventBus()
+
+# ── Shared ActionExecutor (Agent Action System) ──
+# Configured lazily on first /api/connect with mcp_tools config
+_action_executor = ActionExecutor()
 
 # ── In-memory engine store ──
 # Key: session_id, Value: RuntimeEngine
@@ -110,6 +134,8 @@ async def connect(req: ConnectRequest):
 
     This is the only endpoint that creates a new engine + session.
     Returns a session_id that must be used for all subsequent calls.
+
+    If mcp_tools are provided, initializes the shared ToolManager.
     """
     llm_config = {
         "api_url": req.api_url,
@@ -119,9 +145,39 @@ async def connect(req: ConnectRequest):
         "max_tokens": req.max_tokens,
     }
     try:
+        # Initialize Action System if MCP configs provided
+        if req.mcp_tools:
+            mcp_configs = [
+                MCPConfig(
+                    command=mc.command,
+                    args=list(mc.args),
+                    env=dict(mc.env),
+                    url=mc.url,
+                    timeout=mc.timeout,
+                )
+                for mc in req.mcp_tools
+            ]
+            if not _action_executor.is_initialized():
+                search_adapter = SearchAdapter(mcp_configs, event_bus=_agent_events)
+                _action_executor.register("Search", search_adapter)
+                # Human capability is always available (no external config needed)
+                human_adapter = HumanAdapter(event_bus=_agent_events)
+                _action_executor.register("Human", human_adapter)
+            else:
+                if not _action_executor.has_capability("Human"):
+                    human_adapter = HumanAdapter(event_bus=_agent_events)
+                    _action_executor.register("Human", human_adapter)
+        else:
+            # No MCP tools, but Human capability should still be available
+            if not _action_executor.is_initialized():
+                human_adapter = HumanAdapter(event_bus=_agent_events)
+                _action_executor.register("Human", human_adapter)
+
         engine = RuntimeEngine(
             llm_config=llm_config, world=_world, auto_save=False,
             communication=_communication, shared_knowledge=_shared_knowledge,
+            action_executor=_action_executor if _action_executor.is_initialized() else None,
+            event_bus=_agent_events,
         )
         session = engine.create_session()
         _engines[session.id] = engine
@@ -653,3 +709,249 @@ async def health():
             "ticks": world_summary["meta"]["tick"] if world_summary else 0,
         },
     }
+
+
+# ── Action System ──
+
+
+@router.get(
+    "/api/capabilities",
+    response_model=CapabilitiesResponse,
+)
+async def list_capabilities():
+    """List all available capabilities and their operations."""
+    if not _action_executor.is_initialized():
+        return CapabilitiesResponse(capabilities=[])
+
+    caps = _action_executor.list_capabilities()
+    result = []
+    for cap in caps:
+        ops_raw = _action_executor.get_operations(cap.name)
+        ops = [
+            OperationInfo(
+                name=o.get("name", "?"),
+                description=o.get("description", ""),
+                parameters=o.get("parameters", {}),
+            )
+            for o in ops_raw
+        ]
+        result.append(CapabilityInfo(
+            name=cap.name,
+            description=cap.description,
+            enabled=cap.enabled,
+            operations=ops,
+        ))
+    return CapabilitiesResponse(capabilities=result)
+
+
+@router.get(
+    "/api/capabilities/status",
+    response_model=ActionSystemStatusResponse,
+)
+async def action_system_status():
+    """Get Action System status (capabilities list)."""
+    caps = _action_executor.list_capabilities() if _action_executor.is_initialized() else []
+    return ActionSystemStatusResponse(
+        initialized=_action_executor.is_initialized(),
+        capability_count=len(caps),
+        capabilities=[c.name for c in caps],
+    )
+
+
+@router.post(
+    "/api/actions/execute",
+    response_model=ObservationResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+async def execute_action(req: ActionRequest):
+    """Execute an action on a capability.
+
+    The action is routed to the correct capability adapter.
+    Session ID is required to verify the engine is running.
+    """
+    engine = _get_engine(req.session_id)
+    if not _action_executor.is_initialized():
+        raise HTTPException(
+            status_code=400,
+            detail="Action system not initialized — provide mcp_tools config on connect",
+        )
+    try:
+        action = Action(
+            capability=req.capability,
+            operation=req.operation,
+            parameters=req.parameters or {},
+        )
+        observation = _action_executor.execute(action)
+        return ObservationResponse(
+            success=observation.success,
+            content=observation.content,
+            metadata=observation.metadata,
+            error=observation.error,
+        )
+    except Exception as e:
+        return ObservationResponse(success=False, error=str(e))
+
+
+# ── Human Interaction ──
+
+
+@router.get(
+    "/api/human/pending/{session_id}",
+    response_model=PendingQuestionResponse,
+)
+async def get_pending_human_question(session_id: str):
+    """Check if an agent has a pending question waiting for human answer."""
+    engine = _get_engine(session_id)
+    try:
+        session = engine.get_session(session_id)
+        from runtime_kernel import SessionStatus
+        if session.status != SessionStatus.WAITING_HUMAN:
+            return PendingQuestionResponse(session_id=session_id, has_pending=False)
+        q = session.pending_human_question or {}
+        return PendingQuestionResponse(
+            session_id=session_id,
+            has_pending=True,
+            question=q.get("question", ""),
+            reason=q.get("reason", ""),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/api/human/answer",
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+async def submit_human_answer(req: HumanAnswerRequest):
+    """Submit a human answer to an agent's pending question.
+
+    The agent's step will be continued with the answer as Observation.
+    """
+    engine = _get_engine(req.session_id)
+    try:
+        result = engine.continue_with_human_answer(req.session_id, req.answer)
+        return result
+    except Exception as e:
+        _cleanup_on_error(req.session_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Policy Engine ──
+
+
+@router.get("/api/policy/{session_id}")
+async def get_policy_biases(session_id: str):
+    """Get current policy biases for an agent."""
+    engine = _get_engine(session_id)
+    try:
+        biases = engine._policy_engine.get_biases()
+        prompt_context = engine._policy_engine.format_for_prompt()
+        return {
+            "session_id": session_id,
+            "biases": biases,
+            "prompt_context": prompt_context,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/policy/reset/{session_id}")
+async def reset_policy(session_id: str):
+    """Reset policy biases to defaults."""
+    engine = _get_engine(session_id)
+    try:
+        engine._policy_engine.reset()
+        return {"ok": True, "session_id": session_id, "biases": engine._policy_engine.get_biases()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Scientific Loop ──
+
+
+@router.get("/api/science/history/{session_id}")
+async def get_science_history(session_id: str):
+    """Get scientific cycle history for an agent."""
+    engine = _get_engine(session_id)
+    try:
+        return {
+            "session_id": session_id,
+            "cycles": engine._scientific_loop.get_history(),
+            "cycle_count": engine._scientific_loop.cycle_count,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/science/status/{session_id}")
+async def get_science_status(session_id: str):
+    """Get science loop status for an agent."""
+    engine = _get_engine(session_id)
+    try:
+        session = engine.get_session(session_id)
+        world_model = session.state.get("world_model", {})
+        findings = world_model.get("scientific_findings", [])
+        insights = world_model.get("insights", [])
+        return {
+            "session_id": session_id,
+            "cycle_count": engine._scientific_loop.cycle_count,
+            "interval": engine._scientific_loop.interval,
+            "should_run": engine._scientific_loop.should_run(session.round),
+            "round": session.round,
+            "last_cycle_round": engine._scientific_loop._last_cycle_round,
+            "findings_count": len(findings),
+            "insights_count": len(insights),
+            "latest_insights": insights[-5:],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Agent Observability Events ──
+
+
+@router.get("/api/events/{session_id}")
+async def get_agent_events(session_id: str, since: str = "", limit: int = 200):
+    """Get stored agent events for a session.
+
+    Optional `since` parameter filters to events after a specific event ID.
+    """
+    events = _agent_events.get_events(session_id, since_id=since or None, limit=limit)
+    return {
+        "session_id": session_id,
+        "events": [e.to_dict() for e in events],
+        "count": len(events),
+    }
+
+
+@router.websocket("/ws/events/{session_id}")
+async def websocket_agent_events(websocket: WebSocket, session_id: str):
+    """Stream agent events in real-time via WebSocket.
+
+    1. Sends all stored events for the session (catch-up)
+    2. Then streams new events as they happen
+    3. Client reconnects by providing the last received event ID
+    """
+    await websocket.accept()
+
+    # Send stored events first
+    stored = _agent_events.get_events(session_id, limit=200)
+    for event in stored:
+        try:
+            await websocket.send_json(event.to_dict())
+        except Exception:
+            return  # Client disconnected during catch-up
+
+    # Subscribe to new events
+    queue = _agent_events.subscribe(session_id)
+    try:
+        while True:
+            event = await queue.get()
+            try:
+                await websocket.send_json(event.to_dict())
+            except Exception:
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _agent_events.unsubscribe(session_id, queue)

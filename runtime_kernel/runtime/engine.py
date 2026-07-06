@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 from typing import Any, Optional
 
@@ -74,7 +75,11 @@ from runtime_kernel.runtime.parser import (
     repair_state,
 )
 from runtime_kernel.runtime.shared_memory import SharedKnowledge
+from runtime_kernel.runtime.action import Action, ActionExecutor, Observation
+from runtime_kernel.runtime.agent_events import AgentEvent, AgentEventBus
 from runtime_kernel.runtime.persistence import Persistence
+from runtime_kernel.runtime.policy_engine import PolicyEngine
+from runtime_kernel.runtime.scientific import ScientificLoop
 from runtime_kernel.runtime.prompt import PromptBuilder
 from runtime_kernel.runtime.scheduler import Scheduler
 from runtime_kernel.runtime.evolution import EvolutionEngine, RuntimeParameters
@@ -112,6 +117,8 @@ class RuntimeEngine:
         enable_heartbeat: bool = True,
         communication: Optional[CommunicationManager] = None,
         shared_knowledge: Optional[SharedKnowledge] = None,
+        action_executor: Optional[ActionExecutor] = None,
+        event_bus: Optional["AgentEventBus"] = None,
     ) -> None:
         # LLM client
         if llm_config is None:
@@ -182,6 +189,9 @@ class RuntimeEngine:
             interval=50,
         )
 
+        # Policy Engine (causal policy evolution)
+        self._policy_engine = PolicyEngine()
+
         self._heartbeat = HeartbeatManager(
             callback=self._heartbeat_pulse,
             interval=heartbeat_interval,
@@ -203,6 +213,20 @@ class RuntimeEngine:
 
         # Action-based message counter (resets each step)
         self._action_messages_sent: int = 0
+
+        # Action Executor (Agent action system)
+        self._action_executor = action_executor
+
+        # Agent Event Bus (Observability)
+        self._event_bus = event_bus
+
+        # Scientific Loop (autonomous scientific method)
+        self._science_interval = 10
+        self._scientific_loop = ScientificLoop(
+            llm_callback=self._llm_complete_wrapper,
+            action_executor=self._action_executor,
+            interval=self._science_interval,
+        )
 
         # Start heartbeat
         if enable_heartbeat:
@@ -457,6 +481,266 @@ class RuntimeEngine:
         """
         return self.step(session_id, human_input=human_message)
 
+    def continue_with_human_answer(self, session_id: str, answer: str) -> dict[str, Any]:
+        """Continue an agent step after a human answer.
+
+        When the agent used Human.ask, the step paused at WAITING_HUMAN.
+        This method resumes: builds a continuation prompt with the
+        human answer as an Observation, calls LLM, then continues the
+        action loop (agent can decide to ask more, search, or finish).
+
+        Args:
+            session_id: The session ID.
+            answer: The human's answer text.
+
+        Returns a step result dict (same format as step()).
+        """
+        session = self.get_session(session_id)
+
+        if session.status != SessionStatus.WAITING_HUMAN:
+            return {
+                "type": "error",
+                "error": f"Session is not WAITING_HUMAN (status={session.status.value})",
+            }
+
+        question_data = session.pending_human_question or {}
+        session.pending_human_question = None
+        session.set_status(SessionStatus.RUNNING)
+
+        print(
+            f"  [Human] Resuming with answer: {answer[:80]}",
+            file=sys.stderr,
+        )
+
+        # Store answer in memory
+        self._memory_manager.store(
+            session_id=session.id,
+            round_num=session.round,
+            state_dict={},
+            record_type="human_answer",
+            content=answer,
+            summary=f"人类回答: {answer[:80]}",
+            importance=0.8,
+        )
+
+        # Build capability context
+        capability_context_str = ""
+        if self._action_executor and self._action_executor.is_initialized():
+            capability_context_str = self._action_executor.format_for_prompt()
+        policy_str = self._policy_engine.format_for_prompt()
+        if policy_str:
+            if capability_context_str:
+                capability_context_str += "\n\n" + policy_str
+            else:
+                capability_context_str = policy_str
+
+        # Build continuation prompt with human answer as Observation
+        observation_data = {
+            "capability": "Human",
+            "operation": "ask",
+            "parameters": question_data,
+            "result": answer,
+            "success": True,
+            "error": "",
+        }
+
+        messages = PromptBuilder.build_observation_continuation(
+            observations=[observation_data],
+            capability_context=capability_context_str,
+        )
+
+        # Emit answer received event
+        self._emit_event(session.id, "human_answer_received", {
+            "question": question_data.get("question", ""),
+            "answer": answer,
+        }, round=session.round)
+
+        # Call LLM
+        if self._demo:
+            llm_delta = {"topic": f"{session.state.topic}_continued",
+                         "belief": f"human_says: {answer[:40]}",
+                         "goal": session.state.goal}
+            llm_force = 0.5
+            llm_action = ""
+            llm_source = "human"
+            llm_nl = f"（人类回答：{answer[:60]}）"
+            wm_updates = {}
+        else:
+            response = self._llm.complete(
+                messages, temperature=0.7, max_tokens=1200
+            )
+            if not response:
+                return {"type": "error", "error": "LLM returned empty response"}
+            llm_nl, llm_delta, llm_force, llm_action, llm_source = extract_causal_vector(response)
+            wm_updates = extract_world_model_updates(response)
+
+        # Continue the action loop (agent may ask more questions or use other capabilities)
+        action_results = [observation_data]
+        if self._action_executor and self._action_executor.is_initialized() and not self._demo:
+            MAX_ACTIONS = 3
+            action_count = 0
+
+            while wm_updates.get("capability_action") and action_count < MAX_ACTIONS:
+                cap_action_data = wm_updates["capability_action"]
+                action_count += 1
+
+                inner_action = Action.from_dict(cap_action_data)
+                cap_name = inner_action.capability
+                op_name = inner_action.operation
+
+                print(f"  [Human/Continue] Agent uses {cap_name}.{op_name}", file=sys.stderr)
+
+                self._emit_event(session.id, "action_start", {
+                    "action": inner_action.to_dict(),
+                }, round=session.round)
+
+                t_before = time.time()
+                observation = self._action_executor.execute(inner_action, session_id=session.id)
+                elapsed = int((time.time() - t_before) * 1000)
+
+                # Handle nested Human.ask
+                if cap_name == "Human" and op_name == "ask" and observation.success:
+                    session.pending_human_question = {
+                        "question": inner_action.parameters.get("question", ""),
+                        "reason": inner_action.parameters.get("reason", ""),
+                    }
+                    session.set_status(SessionStatus.WAITING_HUMAN)
+                    self._emit_event(session.id, "waiting_human", {
+                        "question": inner_action.parameters.get("question", ""),
+                        "reason": inner_action.parameters.get("reason", ""),
+                    }, round=session.round)
+                    action_results.append({
+                        "capability": cap_name, "operation": op_name,
+                        "parameters": inner_action.parameters,
+                        "result": observation.content, "success": observation.success,
+                    })
+                    return {
+                        "type": "waiting_human",
+                        "session_id": session.id,
+                        "round": session.round,
+                        "question": inner_action.parameters.get("question", ""),
+                        "reason": inner_action.parameters.get("reason", ""),
+                        "action_results": action_results,
+                        "state": session.state.to_dict(),
+                    }
+
+                self._emit_event(session.id, "observation", {
+                    "action": inner_action.to_dict(),
+                    "success": observation.success,
+                    "content": observation.content,
+                    "elapsed_ms": elapsed,
+                }, round=session.round)
+
+                action_results.append({
+                    "capability": cap_name, "operation": op_name,
+                    "parameters": inner_action.parameters,
+                    "result": observation.content if observation.success else observation.error,
+                    "success": observation.success, "error": observation.error,
+                })
+
+                self._memory_manager.store(
+                    session_id=session.id, round_num=session.round, state_dict={},
+                    record_type="action_result",
+                    content=f"{cap_name}.{op_name}: {'ok' if observation.success else 'failed'}",
+                    summary=f"Action: {cap_name}.{op_name}",
+                    importance=0.7,
+                )
+
+                # Build and call LLM again
+                messages = PromptBuilder.build_observation_continuation(
+                    observations=action_results,
+                    capability_context=capability_context_str,
+                )
+                response = self._llm.complete(messages, temperature=0.7, max_tokens=1200)
+                if not response:
+                    break
+                llm_nl, llm_delta, llm_force, llm_action, llm_source = extract_causal_vector(response)
+                wm_updates = extract_world_model_updates(response)
+
+        # Update policy biases from this human interaction
+        if action_results:
+            self._policy_engine.update_from_step(action_results)
+            if self._scientific_loop.should_run(session.round) and not self._demo:
+                self._run_science_cycle(session, action_results)
+
+        # Process final state update (same as step())
+        state_before = session.state.to_dict()
+        world_room_before = self._world.agent_position(session.id) if self._world else ""
+        identity_before = session.identity_anchor
+        drives_before = session.drives
+        thought_pool_before = session.thought_pool
+        env_context = self._world.get_context(session.id) if self._world else ""
+
+        if llm_delta and not self._demo:
+            llm_delta, llm_force = apply_all_constraints(
+                delta=llm_delta, force=llm_force, round_num=session.round,
+                current_topic=session.state.topic,
+                identity_mass=session.identity_maturity,
+                recent_experiences=session.experiences,
+            )
+            llm_delta = apply_world_anchor(
+                delta=llm_delta, current_topic=session.state.topic,
+                env_context=env_context, human_input=answer,
+            )
+
+        # Process world model updates
+        self._process_world_model_updates(session, wm_updates)
+
+        # Update cognitive models
+        self._update_cognitive_models(session, wm_updates)
+
+        # Compute and integrate forces
+        f_memory = compute_memory_force(session.state.to_dict(), session.experiences)
+        f_identity = compute_identity_force(session.state.to_dict(), session.identity_maturity,
+                                             llm_delta or {}, llm_force)
+        f_world = compute_world_force(env_context)
+        llm_vector = compute_llm_force(delta=llm_delta, strength=llm_force,
+                                        action=llm_action, source=llm_source) if llm_delta else CausalVector(source="llm", strength=0.0)
+        state_dict = integrate_state(session.state.to_dict(), llm_vector, f_memory, f_identity, f_world, session.identity_maturity)
+
+        # Merge state
+        state_dict["hypotheses"] = [h.to_dict() for h in session.hypothesis_manager.active_hypotheses]
+        state_dict["evidence"] = [e.to_dict() for e in session.evidence_manager.all_evidence[-20:]]
+        state = repair_state(State(state_dict))
+        session.update_state(state.to_dict(), cause=StateCause.HUMAN.value)
+        session.reset_rounds_since_human()
+
+        # World action
+        action = llm_action or state_dict.get("action", "")
+        if self._world and action:
+            self._world.act(session.id, action)
+            self._emit_event(session.id, "world_action", {"action": action}, round=session.round)
+
+        # Record stats and memory
+        if action:
+            self._runtime_stats.get_agent_stats(session.id).record_action(action)
+        self._runtime_stats.get_agent_stats(session.id).set_round(session.round)
+
+        self._memory_manager.store_state(session_id=session.id, round_num=session.round, state_dict=state.to_dict())
+        self._update_drives_and_goals(session, state.to_dict(), is_human_interaction=True)
+
+        # Causal entry
+        session.causality.create_entry(
+            session_id=session.id, round_num=session.round, cause=StateCause.HUMAN.value,
+            state_before=state_before, state_after=state.to_dict(),
+            action=action, world_room=world_room_before,
+            identity_anchor=identity_before, drives=drives_before, thought_pool=thought_pool_before,
+            reasoning=f"human_answer: {answer[:100]}", human_input=answer, nl_response=llm_nl,
+        )
+
+        session.set_status(SessionStatus.IDLE)
+
+        return {
+            "type": "human_answer_processed",
+            "session_id": session.id,
+            "round": session.round,
+            "state": state.to_dict(),
+            "nl_response": llm_nl,
+            "action_results": action_results,
+            "drives": session.drives,
+            "thought_pool": session.thought_pool,
+        }
+
     def _handle_autonomous_step(self, session: AgentSession) -> dict[str, Any]:
         """Execute an autonomous thinking step (World Model focus).
 
@@ -583,6 +867,18 @@ class RuntimeEngine:
         # 3d. Build causal chain
         causal_context = session.causality.build_context(session.id, n=5)
 
+        # 3e. Build capability context (from ActionExecutor)
+        capability_context_str = ""
+        if self._action_executor and self._action_executor.is_initialized():
+            capability_context_str = self._action_executor.format_for_prompt()
+        # Append policy biases as additional context
+        policy_str = self._policy_engine.format_for_prompt()
+        if policy_str:
+            if capability_context_str:
+                capability_context_str += "\n\n" + policy_str
+            else:
+                capability_context_str = policy_str
+
         # 4. Build prompt with Cognitive Architecture
         env_context = self._world.get_context(session.id) if self._world else ""
         messages = PromptBuilder.build_step(
@@ -612,6 +908,7 @@ class RuntimeEngine:
             working_memory_context=working_memory_context,
             perception_context=perception_context,
             theory_of_mind_context=theory_of_mind_context,
+            capability_context=capability_context_str,
         )
 
         # 5. Call LLM
@@ -621,6 +918,7 @@ class RuntimeEngine:
         llm_source: str = "llm"
         llm_nl: str = ""
         wm_updates: dict = {}
+        action_results: list[dict] = []
 
         if self._demo:
             llm_delta = {"topic": f"{session.state.topic}_demo",
@@ -635,6 +933,171 @@ class RuntimeEngine:
                 llm_nl, llm_delta, llm_force, llm_action, llm_source = extract_causal_vector(response)
                 # Extract world model updates from the same response
                 wm_updates = extract_world_model_updates(response)
+
+                # Emit planner event with LLM's decision
+                has_action = bool(wm_updates.get("capability_action"))
+                self._emit_event(session.id, "planner", {
+                    "delta_topic": llm_delta.get("topic", ""),
+                    "delta_belief": llm_delta.get("belief", ""),
+                    "action": llm_action,
+                    "decision": "使用能力" if has_action else "更新世界模型",
+                    "has_capability_action": has_action,
+                    "force": llm_force,
+                }, round=session.round)
+
+        # ── Multi-turn Action Execution Loop ──
+        # Planner produces Action → ActionExecutor → Observation → Planner continues
+        if self._action_executor and self._action_executor.is_initialized() and not self._demo:
+            MAX_ACTIONS = 3
+            action_count = 0
+
+            while wm_updates.get("capability_action") and action_count < MAX_ACTIONS:
+                cap_action_data = wm_updates["capability_action"]
+                action_count += 1
+
+                action = Action.from_dict(cap_action_data)
+                cap_name = action.capability
+                op_name = action.operation
+
+                print(
+                    f"  [Action] Agent uses {cap_name}.{op_name} ({action_count}/{MAX_ACTIONS})",
+                    file=sys.stderr,
+                )
+
+                # Emit planner decision event
+                self._emit_event(session.id, "planner", {
+                    "decision": f"使用 {cap_name} 能力: {op_name}",
+                    "action": action.to_dict(),
+                }, round=session.round)
+
+                # Emit action_start event
+                self._emit_event(session.id, "action_start", {
+                    "action": action.to_dict(),
+                }, round=session.round)
+
+                # Execute the action →
+                t_before = time.time()
+                observation = self._action_executor.execute(action, session_id=session.id)
+                elapsed = int((time.time() - t_before) * 1000)
+
+                # Emit observation event
+                self._emit_event(session.id, "observation", {
+                    "action": action.to_dict(),
+                    "success": observation.success,
+                    "content": observation.content,
+                    "elapsed_ms": elapsed,
+                }, round=session.round)
+
+                # ── Human.ask: pause action loop, wait for answer ──
+                if cap_name == "Human" and op_name == "ask" and observation.success:
+                    session.pending_human_question = {
+                        "question": action.parameters.get("question", ""),
+                        "reason": action.parameters.get("reason", ""),
+                    }
+                    session.set_status(SessionStatus.WAITING_HUMAN)
+
+                    self._emit_event(session.id, "waiting_human", {
+                        "question": action.parameters.get("question", ""),
+                        "reason": action.parameters.get("reason", ""),
+                    }, round=session.round)
+
+                    action_results.append({
+                        "capability": cap_name,
+                        "operation": op_name,
+                        "parameters": action.parameters,
+                        "result": observation.content if observation.success else observation.error,
+                        "success": observation.success,
+                        "error": observation.error,
+                    })
+
+                    # Store question in memory
+                    self._memory_manager.store(
+                        session_id=session.id,
+                        round_num=session.round,
+                        state_dict={},
+                        record_type="human_question",
+                        content=action.parameters.get("question", ""),
+                        summary=f"向人类提问: {action.parameters.get('question', '')[:80]}",
+                        importance=0.8,
+                    )
+
+                    # Return early — agent is waiting for human answer
+                    # We inject the human question into the step result
+                    # The step is NOT complete; it will be resumed via continue_with_human_answer()
+                    return {
+                        "type": "waiting_human",
+                        "session_id": session.id,
+                        "round": session.round,
+                        "question": action.parameters.get("question", ""),
+                        "reason": action.parameters.get("reason", ""),
+                        "action_results": action_results,
+                        "state": session.state.to_dict(),
+                        "drives": session.drives,
+                        "thought_pool": session.thought_pool,
+                    }
+
+                action_results.append({
+                    "capability": cap_name,
+                    "operation": op_name,
+                    "parameters": action.parameters,
+                    "result": observation.content if observation.success else observation.error,
+                    "success": observation.success,
+                    "error": observation.error,
+                })
+
+                # Store Observation in memory
+                self._memory_manager.store(
+                    session_id=session.id,
+                    round_num=session.round,
+                    state_dict={},
+                    record_type="action_observation",
+                    content=(
+                        f"{cap_name}.{op_name}: "
+                        f"{'✅' if observation.success else '❌ ' + observation.error}"
+                    ),
+                    summary=f"Action: {cap_name}.{op_name}({action.parameters})",
+                    importance=0.7,
+                )
+
+                # Build continuation prompt with observation
+                messages = PromptBuilder.build_observation_continuation(
+                    observations=action_results,
+                    capability_context=capability_context_str,
+                )
+
+                # Call LLM again with observation context
+                response = self._llm.complete(
+                    messages, temperature=0.7, max_tokens=1200
+                )
+                if not response:
+                    print(
+                        f"  [Action] LLM returned empty response after action, stopping",
+                        file=sys.stderr,
+                    )
+                    break
+
+                # Parse new response — REPLACES previous delta/force/action
+                llm_nl, llm_delta, llm_force, llm_action, llm_source = extract_causal_vector(response)
+                wm_updates = extract_world_model_updates(response)
+
+                print(
+                    f"  [Action] Cycle complete, next capability_action: {bool(wm_updates.get('capability_action'))}",
+                    file=sys.stderr,
+                )
+
+            if action_results:
+                print(
+                    f"  [Action] Action loop done: {action_count} action(s), "
+                    f"final capability_action={bool(wm_updates.get('capability_action'))}",
+                    file=sys.stderr,
+                )
+                # Update policy biases based on this step's outcomes
+                self._policy_engine.update_from_step(action_results)
+
+            # Run scientific cycle if interval reached
+            if (self._scientific_loop.should_run(session.round)
+                    and not self._demo):
+                self._run_science_cycle(session, action_results)
 
         # 5b. Apply constraint layers (keep for backward compat but reduce disruption)
         if llm_delta and not self._demo:
@@ -721,6 +1184,11 @@ class RuntimeEngine:
             action = llm_action or state_dict.get("action", "")
             if action:
                 self._world.act(session.id, action)
+                # Emit world_action event
+                self._emit_event(session.id, "world_action", {
+                    "action": action,
+                    "room": self._world.agent_position(session.id) if self._world else "",
+                }, round=session.round)
 
         # 10b. Record runtime statistics
         if action:
@@ -774,6 +1242,13 @@ class RuntimeEngine:
             state_dict=state.to_dict(),
         )
 
+        # Emit memory_update event
+        self._emit_event(session.id, "memory_update", {
+            "round": session.round,
+            "state_topic": state.get("topic", ""),
+            "state_belief": state.get("belief", ""),
+        }, round=session.round)
+
         # 14. Update drives + generate thought pool
         self._update_drives_and_goals(session, state.to_dict())
 
@@ -800,6 +1275,17 @@ class RuntimeEngine:
                     state_dict=state.to_dict(),
                     summary=summary,
                 )
+
+        # Emit final_answer event at end of step
+        self._emit_event(session.id, "final_answer", {
+            "topic": state.get("topic", ""),
+            "belief": state.get("belief", ""),
+            "goal": state.get("goal", ""),
+            "hypothesis_count": len(session.hypothesis_manager.active_hypotheses),
+            "evidence_count": len(session.evidence_manager.all_evidence),
+            "confidence": state.get("confidence", 0.0),
+            "action_results": action_results,
+        }, round=session.round)
 
         session.set_status(SessionStatus.IDLE)
 
@@ -1373,6 +1859,17 @@ class RuntimeEngine:
         # Build causal context
         causal_context = session.causality.build_context(session.id, n=5)
 
+        # Build capability context (from ActionExecutor)
+        capability_context_str = ""
+        if self._action_executor and self._action_executor.is_initialized():
+            capability_context_str = self._action_executor.format_for_prompt()
+        policy_str = self._policy_engine.format_for_prompt()
+        if policy_str:
+            if capability_context_str:
+                capability_context_str += "\n\n" + policy_str
+            else:
+                capability_context_str = policy_str
+
         # Build cognitive model contexts
         self_model_context = session.self_model.format_for_prompt()
         world_model_cog_context = session.world_model_cog.format_for_prompt()
@@ -1410,6 +1907,7 @@ class RuntimeEngine:
             working_memory_context=working_memory_context,
             perception_context=perception_context,
             theory_of_mind_context=theory_of_mind_context,
+            capability_context=capability_context_str,
         )
 
         # Call LLM
@@ -1920,6 +2418,111 @@ class RuntimeEngine:
     def update_llm_config(self, **kwargs: Any) -> None:
         """Update LLM configuration at runtime."""
         self._llm.update_config(**kwargs)
+
+    # ── LLM wrapper for sub-systems ──
+
+    def _llm_complete_wrapper(self, messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
+        """Wrapper for subsystems (ScientificLoop, etc.) to call the LLM.
+
+        Returns the response text, or empty string on failure.
+        """
+        try:
+            return self._llm.complete(messages, temperature=temperature, max_tokens=max_tokens) or ""
+        except Exception as e:
+            print(f"  [LLM wrapper] Error: {e}", file=sys.stderr)
+            return ""
+
+    # ── Event emission ──
+
+    # ── Scientific Cycle ──
+
+    def _run_science_cycle(self, session: "AgentSession", action_results: list[dict]) -> None:
+        """Run one scientific cycle for a session.
+
+        Called when should_run() returns True (every N rounds).
+        Generates questions, forms hypotheses, designs experiments,
+        executes them, and updates the world model.
+
+        Args:
+            session: The target session.
+            action_results: Recent action results for context.
+        """
+        if self._demo:
+            return
+
+        world_model = session.state.get("world_model", {})
+        uncertainties = session.state.get("uncertainties", [])
+        open_questions = session.state.get("open_questions", [])
+
+        # Recent failures from action_results
+        recent_failures = [
+            f"{a.get('capability', '?')}.{a.get('operation', '?')}"
+            for a in action_results if not a.get("success")
+        ]
+
+        # Available operations for experiment design
+        ops = []
+        if self._action_executor:
+            for cap_name in ["Search", "Human"]:
+                if self._action_executor.has_capability(cap_name):
+                    ops.extend(self._action_executor.get_operations(cap_name))
+
+        capabilities_context = ""
+        if self._action_executor:
+            capabilities_context = self._action_executor.format_for_prompt()
+
+        summary = self._scientific_loop.run_cycle(
+            current_round=session.round,
+            world_model=world_model,
+            uncertainties=uncertainties,
+            open_questions=open_questions,
+            recent_failures=recent_failures,
+            available_operations=ops,
+            capabilities_context=capabilities_context,
+        )
+
+        # Apply theory updates to world model
+        if summary.theory_delta:
+            from runtime_kernel.runtime.scientific.theory_updater import update_world_model
+            new_wm = update_world_model(world_model, summary.theory_delta)
+            if new_wm != world_model:
+                session.state.set_world_model(new_wm)
+
+            # Add insights to open questions / knowledge
+            for insight in summary.insights:
+                if insight:
+                    session.state.set_open_questions(
+                        session.state.get("open_questions", []) + [f"[科学] {insight}"]
+                    )
+
+        # Emit science cycle event
+        self._emit_event(session.id, "science_cycle", {
+            "cycle": summary.cycle,
+            "question": summary.question.question if summary.question else "",
+            "hypothesis_count": len(summary.hypotheses),
+            "insights": summary.insights,
+        }, round=session.round)
+
+        print(
+            f"  [Science] 🔬 Cycle {summary.cycle} complete for {session.id[:8]}",
+            file=sys.stderr,
+        )
+
+    # ── Event emission ──
+
+    def _emit_event(self, session_id: str, event_type: str, payload: dict, round: int = 0) -> None:
+        """Emit an agent observability event."""
+        if not self._event_bus:
+            return
+        try:
+            self._event_bus.emit(AgentEvent(
+                session_id=session_id,
+                type=event_type,
+                payload=payload,
+                round=round,
+            ))
+        except Exception:
+            pass
 
     def health_check(self) -> bool:
         """Check LLM API connectivity."""

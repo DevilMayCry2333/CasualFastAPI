@@ -43,6 +43,19 @@ from runtime_kernel.runtime.runtime_statistics import AgentStats, RuntimeStatist
 from runtime_kernel.runtime.heartbeat import HeartbeatManager
 from runtime_kernel.runtime.environment import VirtualEnvironment
 from runtime_kernel.runtime.self_modification import SelfModificationManager
+from runtime_kernel.runtime.action import Action, ActionExecutor, Capability, CapabilityAdapter, HumanAdapter, Observation, SearchAdapter
+from runtime_kernel.runtime.agent_events import AgentEvent, AgentEventBus
+from runtime_kernel.runtime.mcp import MCPConfig
+from runtime_kernel.runtime.policy_engine import PolicyEngine, OutcomeEvaluator
+from runtime_kernel.runtime.scientific import (
+    CausalEdge,
+    CycleSummary,
+    ExperimentResult,
+    ExperimentStep,
+    Hypothesis as ScientificHypothesis,
+    ScientificLoop,
+    ScientificQuestion,
+)
 from runtime_kernel.runtime.models import (
     DEFAULT_IDENTITY_ANCHOR,
     StateCause,
@@ -119,4 +132,24 @@ __all__ = [
     "StateValidationError",
     "EmbeddingError",
     "MemoryError",
+    "Action",
+    "ActionExecutor",
+    "AgentEvent",
+    "AgentEventBus",
+    "Capability",
+    "CapabilityAdapter",
+    "HumanAdapter",
+    "MCPConfig",
+    "OutcomeEvaluator",
+    "CausalEdge",
+    "CycleSummary",
+    "ExperimentResult",
+    "ExperimentStep",
+    "OutcomeEvaluator",
+    "PolicyEngine",
+    "ScientificHypothesis",
+    "ScientificLoop",
+    "ScientificQuestion",
+    "Observation",
+    "SearchAdapter",
 ]

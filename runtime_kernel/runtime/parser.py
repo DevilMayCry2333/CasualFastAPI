@@ -526,6 +526,11 @@ def extract_world_model_updates(text: str) -> dict:
         if cleaned:
             result["send_messages"] = cleaned
 
+    # Tool usage
+    tool_use = state_dict.get("tool_use")
+    if isinstance(tool_use, dict) and tool_use.get("name"):
+        result["tool_use"] = tool_use
+
     # Knowledge operations (share/support/contradict)
     share = state_dict.get("share_knowledge", state_dict.get("share_memory"))
     if isinstance(share, dict):
@@ -537,4 +542,77 @@ def extract_world_model_updates(text: str) -> dict:
     if contradict:
         result["contradict_knowledge"] = str(contradict)
 
+    # Tool usage detection (extracted alongside other fields)
+    tool_use = state_dict.get("tool_use")
+    if isinstance(tool_use, dict) and tool_use.get("name"):
+        result["tool_use"] = tool_use
+
+    # Capability action detection (Action System)
+    # The LLM outputs:
+    #   "action": {"capability": "Search", "operation": "web_search",
+    #              "parameters": {"query": "..."}}
+    # This replaces the older tool_use pattern.
+    raw_action = state_dict.get("action")
+    if isinstance(raw_action, dict) and raw_action.get("capability") and raw_action.get("operation"):
+        result["capability_action"] = raw_action
+        # Also set a readable string action for fallback
+        cap = raw_action["capability"]
+        op = raw_action["operation"]
+        result["action"] = f"{cap}:{op}"
+
     return result
+
+
+def extract_tool_use(text: str) -> Optional[dict]:
+    """Extract the tool_use field from the latest LLM response.
+
+    The LLM can output a tool_use field to request tool execution:
+        "tool_use": {"name": "web_search", "arguments": {"query": "..."}}
+
+    Returns:
+        Dict with "name" and "arguments" keys, or None if no tool use requested.
+    """
+    if not text:
+        return None
+
+    state_part = text
+
+    # Extract state part after ===STATE=== if present
+    if "===STATE===" in text:
+        parts = text.split("===STATE===", 1)
+        state_part = parts[1].strip()
+    elif "{" in text:
+        # Try to find JSON by brace matching
+        brace_start = text.find("{")
+        if brace_start >= 0:
+            depth = 0
+            for i in range(brace_start, len(text)):
+                ch = text[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        state_part = text[brace_start:i + 1]
+                        break
+
+    state_dict = _parse_state_from_text(state_part)
+    if not state_dict:
+        return None
+
+    tool_use = state_dict.get("tool_use")
+    if isinstance(tool_use, dict) and tool_use.get("name"):
+        return tool_use
+
+    # Also check for a standalone tool_use in the non-state part
+    if "===STATE===" not in text:
+        try:
+            data = json.loads(text.strip())
+            if isinstance(data, dict) and data.get("tool_use"):
+                tool_use = data["tool_use"]
+                if isinstance(tool_use, dict) and tool_use.get("name"):
+                    return tool_use
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return None
