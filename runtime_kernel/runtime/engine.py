@@ -80,6 +80,13 @@ from runtime_kernel.runtime.agent_events import AgentEvent, AgentEventBus
 from runtime_kernel.runtime.persistence import Persistence
 from runtime_kernel.runtime.policy_engine import PolicyEngine
 from runtime_kernel.runtime.scientific import ScientificLoop
+from runtime_kernel.runtime.core import ActionValidator, SafetyRules
+from runtime_kernel.runtime.cognitive import CausalGraph, ProbabilisticWorldModel
+from runtime_kernel.runtime.exploration import (
+    ExperimentScheduler,
+    MultiWorldSimulator,
+    StochasticHypothesisGenerator,
+)
 from runtime_kernel.runtime.prompt import PromptBuilder
 from runtime_kernel.runtime.scheduler import Scheduler
 from runtime_kernel.runtime.evolution import EvolutionEngine, RuntimeParameters
@@ -192,6 +199,21 @@ class RuntimeEngine:
         # Policy Engine (causal policy evolution)
         self._policy_engine = PolicyEngine()
 
+        # ===== Three-Layer Architecture =====
+
+        # Stable Core Layer
+        self._safety_rules = SafetyRules()
+        self._core_validator = None  # Set after _action_executor is ready
+
+        # Cognitive Layer extensions
+        self._causal_graph = CausalGraph()
+        self._probabilistic_wm = ProbabilisticWorldModel()
+
+        # Exploration Layer
+        self._hypothesis_generator = StochasticHypothesisGenerator(temperature=0.8)
+        self._experiment_scheduler = ExperimentScheduler()
+        self._multi_world = MultiWorldSimulator()
+
         self._heartbeat = HeartbeatManager(
             callback=self._heartbeat_pulse,
             interval=heartbeat_interval,
@@ -216,6 +238,13 @@ class RuntimeEngine:
 
         # Action Executor (Agent action system)
         self._action_executor = action_executor
+
+        # Stable Core: Validator wraps ActionExecutor
+        if self._action_executor:
+            self._core_validator = ActionValidator(
+                action_executor=self._action_executor,
+                safety_rules=self._safety_rules,
+            )
 
         # Agent Event Bus (Observability)
         self._event_bus = event_bus
@@ -533,6 +562,12 @@ class RuntimeEngine:
                 capability_context_str += "\n\n" + policy_str
             else:
                 capability_context_str = policy_str
+        causal_str = self._causal_graph.format_for_prompt()
+        if causal_str:
+            capability_context_str += "\n\n" + causal_str
+        prob_str = self._probabilistic_wm.format_for_prompt()
+        if prob_str:
+            capability_context_str += "\n\n" + prob_str
 
         # Build continuation prompt with human answer as Observation
         observation_data = {
@@ -595,8 +630,16 @@ class RuntimeEngine:
                 }, round=session.round)
 
                 t_before = time.time()
-                observation = self._action_executor.execute(inner_action, session_id=session.id)
+                if self._core_validator:
+                    observation = self._core_validator.validate_and_execute(inner_action, session_id=session.id)
+                else:
+                    observation = self._action_executor.execute(inner_action, session_id=session.id)
                 elapsed = int((time.time() - t_before) * 1000)
+
+                self._probabilistic_wm.observe(
+                    concept=f"{inner_action.capability} → {inner_action.operation}",
+                    outcome=1.0 if observation.success else 0.0,
+                )
 
                 # Handle nested Human.ask
                 if cap_name == "Human" and op_name == "ask" and observation.success:
@@ -878,6 +921,16 @@ class RuntimeEngine:
                 capability_context_str += "\n\n" + policy_str
             else:
                 capability_context_str = policy_str
+        # Append cognitive layer context
+        causal_str = self._causal_graph.format_for_prompt()
+        if causal_str:
+            capability_context_str += "\n\n" + causal_str
+        prob_str = self._probabilistic_wm.format_for_prompt()
+        if prob_str:
+            capability_context_str += "\n\n" + prob_str
+        mw_str = self._multi_world.format_for_prompt()
+        if mw_str:
+            capability_context_str += "\n\n" + mw_str
 
         # 4. Build prompt with Cognitive Architecture
         env_context = self._world.get_context(session.id) if self._world else ""
@@ -975,10 +1028,19 @@ class RuntimeEngine:
                     "action": action.to_dict(),
                 }, round=session.round)
 
-                # Execute the action →
+                # Execute the action (through Core Validator) →
                 t_before = time.time()
-                observation = self._action_executor.execute(action, session_id=session.id)
+                if self._core_validator:
+                    observation = self._core_validator.validate_and_execute(action, session_id=session.id)
+                else:
+                    observation = self._action_executor.execute(action, session_id=session.id)
                 elapsed = int((time.time() - t_before) * 1000)
+
+                # Update probabilistic world model
+                self._probabilistic_wm.observe(
+                    concept=f"{action.capability} → {action.operation}",
+                    outcome=1.0 if observation.success else 0.0,
+                )
 
                 # Emit observation event
                 self._emit_event(session.id, "observation", {
@@ -1869,6 +1931,12 @@ class RuntimeEngine:
                 capability_context_str += "\n\n" + policy_str
             else:
                 capability_context_str = policy_str
+        causal_str = self._causal_graph.format_for_prompt()
+        if causal_str:
+            capability_context_str += "\n\n" + causal_str
+        prob_str = self._probabilistic_wm.format_for_prompt()
+        if prob_str:
+            capability_context_str += "\n\n" + prob_str
 
         # Build cognitive model contexts
         self_model_context = session.self_model.format_for_prompt()

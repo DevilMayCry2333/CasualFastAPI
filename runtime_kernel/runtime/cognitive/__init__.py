@@ -24,6 +24,8 @@ from runtime_kernel.runtime.cognitive.social_model import AgentSocialProfile, So
 from runtime_kernel.runtime.cognitive.theory_of_mind import MentalState, TheoryOfMind
 from runtime_kernel.runtime.cognitive.working_memory import WorkingMemory
 from runtime_kernel.runtime.cognitive.world_model import WorldModel
+from runtime_kernel.runtime.cognitive.causal_graph import CausalEdge as CausalGraphEdge, CausalGraph
+from runtime_kernel.runtime.cognitive.probabilistic_wm import ProbabilisticWorldModel
 
 __all__ = [
     "AgentSocialProfile",
@@ -36,5 +38,8 @@ __all__ = [
     "SocialModel",
     "TheoryOfMind",
     "WorkingMemory",
+    "CausalGraph",
+    "CausalGraphEdge",
+    "ProbabilisticWorldModel",
     "WorldModel",
 ]

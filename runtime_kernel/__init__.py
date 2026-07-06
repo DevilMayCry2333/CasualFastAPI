@@ -46,6 +46,13 @@ from runtime_kernel.runtime.self_modification import SelfModificationManager
 from runtime_kernel.runtime.action import Action, ActionExecutor, Capability, CapabilityAdapter, HumanAdapter, Observation, SearchAdapter
 from runtime_kernel.runtime.agent_events import AgentEvent, AgentEventBus
 from runtime_kernel.runtime.mcp import MCPConfig
+from runtime_kernel.runtime.core import ActionValidator, SafetyRules
+from runtime_kernel.runtime.exploration import (
+    ExperimentScheduler,
+    MultiWorldSimulator,
+    StochasticHypothesisGenerator,
+)
+from runtime_kernel.runtime.cognitive import CausalGraph, ProbabilisticWorldModel
 from runtime_kernel.runtime.policy_engine import PolicyEngine, OutcomeEvaluator
 from runtime_kernel.runtime.scientific import (
     CausalEdge,
@@ -135,8 +142,15 @@ __all__ = [
     "Action",
     "ActionExecutor",
     "AgentEvent",
+    "ActionValidator",
     "AgentEventBus",
     "Capability",
+    "CausalGraph",
+    "ExperimentScheduler",
+    "MultiWorldSimulator",
+    "ProbabilisticWorldModel",
+    "SafetyRules",
+    "StochasticHypothesisGenerator",
     "CapabilityAdapter",
     "HumanAdapter",
     "MCPConfig",

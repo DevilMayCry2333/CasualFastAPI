@@ -866,6 +866,78 @@ async def reset_policy(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Three-Layer Architecture (Core / Cognitive / Exploration) ──
+
+
+@router.get("/api/core/status/{session_id}")
+async def get_core_status(session_id: str):
+    """Get Stable Core Layer status (validator stats + safety rules)."""
+    engine = _get_engine(session_id)
+    try:
+        validator_stats = engine._core_validator.get_stats() if engine._core_validator else {}
+        safety = engine._safety_rules.get_status()
+        return {
+            "session_id": session_id,
+            "validator": validator_stats,
+            "safety": safety,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/cognitive/graph/{session_id}")
+async def get_causal_graph(session_id: str):
+    """Get causal graph for a session."""
+    engine = _get_engine(session_id)
+    try:
+        return {
+            "session_id": session_id,
+            "causal_graph": engine._causal_graph.to_dict(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/cognitive/beliefs/{session_id}")
+async def get_probabilistic_beliefs(session_id: str):
+    """Get probabilistic world model beliefs."""
+    engine = _get_engine(session_id)
+    try:
+        return {
+            "session_id": session_id,
+            "beliefs": engine._probabilistic_wm.to_dict(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/exploration/experiments/{session_id}")
+async def list_experiments(session_id: str):
+    """List experiments scheduled for a session."""
+    engine = _get_engine(session_id)
+    try:
+        return {
+            "session_id": session_id,
+            "experiments": engine._experiment_scheduler.list_experiments(),
+            "stats": engine._experiment_scheduler.get_stats(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/exploration/worlds/{session_id}")
+async def get_multi_worlds(session_id: str):
+    """Get multi-world simulation results."""
+    engine = _get_engine(session_id)
+    try:
+        return {
+            "session_id": session_id,
+            "worlds": [w.to_dict() for w in engine._multi_world.get_worlds()],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Scientific Loop ──
 
 
