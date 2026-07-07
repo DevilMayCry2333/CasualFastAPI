@@ -345,15 +345,14 @@ class MCPClient:
             self._response_events.pop(self._request_id, None)
             raise MCPError(f"MCP request {method!r} timed out")
 
-    # ── Direct HTTP POST transport (simplest: POST → JSON-RPC response) ──
+    # ── Direct HTTP POST transport (POST → JSON-RPC, handles SSE-wrapped responses) ──
 
     def _send_request_http_direct(self, method: str, params: dict) -> dict:
         """Send JSON-RPC via direct HTTP POST and return the response.
 
-        This is the simplest HTTP transport: each request is a standalone
-        POST to the endpoint URL. No SSE stream needed.
-
-        Used by Tavily MCP, other direct HTTP MCP servers.
+        Supports both:
+          - Direct JSON-RPC response (Content-Type: application/json)
+          - SSE-wrapped response (Content-Type: text/event-stream) — Tavily MCP
         """
         import requests
 
@@ -369,22 +368,59 @@ class MCPClient:
             resp = requests.post(
                 self._message_url,
                 json=request,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream, application/json",
+                },
                 timeout=self._config.timeout,
             )
             resp.raise_for_status()
         except requests.exceptions.RequestException as e:
             raise MCPError(f"HTTP POST to MCP endpoint failed: {e}")
 
-        try:
-            result = resp.json()
-        except json.JSONDecodeError as e:
-            raise MCPError(f"MCP response is not valid JSON: {e}")
+        # Parse response: direct JSON or SSE-wrapped
+        content_type = resp.headers.get("Content-Type", "")
+        body = resp.text
+
+        if "text/event-stream" in content_type:
+            # Parse SSE format: extract the data line
+            result = self._parse_sse_response(body)
+        else:
+            try:
+                result = body
+                result = json.loads(body)
+            except json.JSONDecodeError as e:
+                raise MCPError(f"MCP response is not valid JSON: {e}")
 
         if "error" in result:
             err = result["error"]
             raise MCPError(err.get("message", "Unknown MCP error"))
         return result.get("result", {})
+
+    def _parse_sse_response(self, body: str) -> dict:
+        """Parse an SSE-wrapped JSON-RPC response.
+
+        Handles format:
+            event: message
+            data: {"jsonrpc": "2.0", ...}
+        """
+        current_event = ""
+        for line in body.split("\n"):
+            line = line.strip()
+            if not line:
+                current_event = ""
+                continue
+            if line.startswith("event:"):
+                current_event = line[6:].strip()
+            elif line.startswith("data:"):
+                data = line[5:].strip()
+                if current_event in ("message", "") and data:
+                    try:
+                        return json.loads(data)
+                    except json.JSONDecodeError:
+                        pass
+                current_event = ""
+        raise MCPError("No valid JSON-RPC response found in SSE stream")
 
     # ══════════════════════════════════════════════
     # SSE reader thread

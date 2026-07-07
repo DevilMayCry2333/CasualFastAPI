@@ -260,6 +260,9 @@ class VirtualEnvironment:
                 )
                 lines.append(f"  背包：{inv_desc}")
 
+            # Available world actions
+            lines.append(f"  可用动作: look、move [方向]、take [物品]、read [笔记]、use [物品]、inventory")
+
             # Recent observations
             obs_list = self._observations.get(session_id, [])
             if obs_list:

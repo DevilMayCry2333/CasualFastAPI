@@ -24,6 +24,7 @@ def generate_goals(
     existing_goals: list[ResearchGoal],
     causal_graph_context: str,
     prob_wm_context: str,
+    available_operations: str = "",
     max_goals: int = 3,
 ) -> list[ResearchGoal]:
     """Generate research goals from current system state.
@@ -59,9 +60,11 @@ def generate_goals(
         prompt_parts.append(f"\n最近的失败: {'; '.join(recent_failures[:5])}")
     if existing_statements:
         prompt_parts.append(f"\n已有目标（请避免重复）: {'; '.join(list(existing_statements)[:5])}")
+    if available_operations:
+        prompt_parts.append(f"\n可用操作:\n{available_operations}")
 
     prompt_parts.append(f"""
-生成最多 {max_goals} 个研究目标。每个目标必须是可通过 Search 或 Human 能力验证的。
+生成最多 {max_goals} 个研究目标。每个目标必须可通过以上可用操作验证。
 
 输出JSON格式:
 {{

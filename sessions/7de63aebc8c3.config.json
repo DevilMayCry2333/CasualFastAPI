@@ -1,0 +1,1 @@
+{"api_url": "https://api.deepseek.com/v1/chat/completions", "api_key": "sk-5673fb22572b42c6a01519a64565bb3a", "model": "deepseek-v4-flash", "temperature": 0.85, "max_tokens": 4096, "mcp_tools": [{"url": "https://mcp.tavily.com/mcp/?tavilyApiKey=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", "command": "", "args": [], "env": {}, "timeout": 30.0}]}

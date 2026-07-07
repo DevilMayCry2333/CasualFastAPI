@@ -532,6 +532,11 @@
     <input id="max_tokens" type="number" step="1" min="64" max="32768" value="4096">
   </div>
 
+  <div class="form-group">
+    <label for="mcp_url">MCP 搜索 URL（可选）</label>
+    <input id="mcp_url" type="text" value="https://mcp.tavily.com/mcp/?tavilyApiKey=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" placeholder="MCP 服务器 URL">
+  </div>
+
   <button id="btn-create-agent" class="btn btn-primary btn-full" onclick="createAgent()">
     ✨ 新建 Agent
   </button>
@@ -803,12 +808,14 @@ async function createAgent() {
   if (busy) return;
   setBusy(true);
   try {
+    const mcpUrl = $('mcp_url').value.trim();
     const req = {
       api_url: $('api_url').value.trim(),
       api_key: $('api_key').value,
       model: $('model').value.trim(),
       temperature: parseFloat($('temperature').value) || 0.85,
       max_tokens: parseInt($('max_tokens').value) || 4096,
+      mcp_tools: mcpUrl ? [{ url: mcpUrl }] : [],
     };
     const res = await api('POST', '/api/connect', req);
     const sid = res.session_id;
@@ -854,8 +861,8 @@ function setBusy(b) {
   const hasSel = !!selectedSessionId && sessions.some(s => s.id === selectedSessionId);
   document.querySelectorAll('#actions .btn').forEach(el => {
     if (el.id === 'btn-auto') return;
+    if (el.id === 'btn-restore') { el.disabled = b; return; }  // Always enabled unless busy
     const disabled = b || !hasSel;
-    if (el.id === 'btn-restore') { el.disabled = disabled; return; }
     el.disabled = disabled;
   });
   // Auto button: enabled when any session exists and not busy (but autoThinking overrides)
@@ -1230,19 +1237,33 @@ async function doSnapshot() {
 
 // ===== Restore =====
 async function doRestore() {
-  const fp = prompt('输入快照文件路径:');
-  if (!fp) return;
   setBusy(true);
   try {
-    const res = await api('POST', '/api/restore', { filepath: fp });
-    const sid = res.session_id;
-    sessions.push({ id: sid, name: `Agent-${sessions.length + 1}`, drives: {}, position: '?' });
-    selectedSessionId = sid;
-    renderAgentList();
-    addLog({ type: 'system', title: '📂 已恢复', body: 'Session: ' + sid + '\n从: ' + fp });
-    refreshAllAgents();
-    refreshWorld();
-    toast('恢复成功', 'success');
+    const res = await api('POST', '/api/restore-all');
+    if (res.restored_count > 0) {
+      // Reload sessions from server
+      const sres = await fetch('/api/sessions');
+      const data = await sres.json();
+      if (data.sessions) {
+        for (const s of data.sessions) {
+          if (!sessions.find(l => l.id === s.id)) {
+            sessions.push({
+              id: s.id, name: 'Agent-' + (sessions.length + 1),
+              drives: s.drives || {}, state: s.state || {},
+              round: s.round || 0, position: s.position || '?',
+            });
+          }
+        }
+        selectedSessionId = sessions[0].id;
+        renderAgentList();
+        connectTimeline(selectedSessionId);
+        updateStateBar(sessions[0].state, sessions[0].round);
+        addLog({ type: 'system', title: '♻️ 已恢复 ' + sessions.length + ' 个 Agent', body: '' });
+        toast('恢复了 ' + res.restored_count + ' 个会话', 'success');
+      }
+    } else {
+      toast('没有找到可恢复的保存会话', 'info');
+    }
   } catch (e) {
     toast('Restore 失败: ' + e.message, 'error');
     addLog({ type: 'error', title: '❌ Restore 失败', body: e.message });
@@ -1871,6 +1892,40 @@ document.addEventListener('keydown', e => {
     else doStep();
   }
 });
+
+// ===== Initialize buttons + auto-restore on page load =====
+(async function() {
+  setBusy(false);  // Enable all buttons
+  try {
+    const res = await fetch('/api/sessions');
+    const data = await res.json();
+    if (data.sessions && data.sessions.length > 0) {
+      for (const s of data.sessions) {
+        if (!sessions.find(l => l.id === s.id)) {
+          sessions.push({
+            id: s.id,
+            name: 'Agent-' + (sessions.length + 1),
+            drives: s.drives || {},
+            state: s.state || {},
+            round: s.round || 0,
+            position: s.position || '?',
+            status: s.status || '',
+          });
+        }
+      }
+      // Select the first restored agent
+      selectedSessionId = sessions[0].id;
+      renderAgentList();
+      connectTimeline(selectedSessionId);
+      updateStateBar(sessions[0].state, sessions[0].round);
+      addLog({ type: 'system', title: '♻️ 已恢复 ' + sessions.length + ' 个 Agent', body: '' });
+      setBusy(false);
+      refreshAllAgents();
+    }
+  } catch (e) {
+    // No saved sessions — ignore
+  }
+})();
 
 // ===== Delegated clicks for agent list (more robust than inline onclick) =====
 document.getElementById('agent-list').addEventListener('click', function(e) {

@@ -100,8 +100,10 @@ def save_all_sessions() -> None:
             session = engine.get_session(sid)
             filepath = os.path.join(SNAPSHOT_DIR, f"{sid}.json")
             engine.snapshot(sid, filepath=filepath)
-            # Also save LLM config for restoration
+            # Also save LLM + MCP config for restoration
             config_path = os.path.join(SNAPSHOT_DIR, f"{sid}.config.json")
+            # Retrieve saved MCP config if available (stored on engine at connect time)
+            mcp_cfg = getattr(engine, "_saved_mcp_config", [])
             with open(config_path, "w") as f:
                 json.dump({
                     "api_url": engine._llm.api_url,
@@ -109,6 +111,7 @@ def save_all_sessions() -> None:
                     "model": engine._llm.model,
                     "temperature": engine._llm.temperature,
                     "max_tokens": engine._llm.max_tokens,
+                    "mcp_tools": mcp_cfg,
                 }, f)
         except Exception as e:
             print(f"  [AutoSave] Failed to save {sid[:8]}: {e}")
@@ -117,11 +120,15 @@ def save_all_sessions() -> None:
 def load_all_sessions() -> int:
     """Load all saved sessions from disk. Returns count of restored sessions."""
     count = 0
+    loaded_ids = set()
+
+    # First pass: load sessions with config files
     for cfg_path in glob.glob(os.path.join(SNAPSHOT_DIR, "*.config.json")):
         sid = os.path.basename(cfg_path).replace(".config.json", "")
         session_path = os.path.join(SNAPSHOT_DIR, f"{sid}.json")
         if not os.path.exists(session_path):
             continue
+        loaded_ids.add(sid)
         try:
             with open(cfg_path) as f:
                 config = json.load(f)
@@ -132,6 +139,49 @@ def load_all_sessions() -> int:
                 "temperature": config.get("temperature", 0.85),
                 "max_tokens": config.get("max_tokens", 4096),
             }
+            # Restore MCP config if previously saved
+            mcp_tools_config = config.get("mcp_tools", [])
+            if mcp_tools_config and not _action_executor.has_capability("Search"):
+                mcp_configs = [
+                    MCPConfig(**mc) for mc in mcp_tools_config
+                ]
+                search_adapter = SearchAdapter(mcp_configs, event_bus=_agent_events)
+                _action_executor.register("Search", search_adapter)
+            # Ensure Human capability always exists
+            if not _action_executor.has_capability("Human"):
+                _action_executor.register("Human", HumanAdapter(event_bus=_agent_events))
+
+            engine = RuntimeEngine(
+                llm_config=llm_config, world=_world, auto_save=False,
+                communication=_communication, shared_knowledge=_shared_knowledge,
+                action_executor=_action_executor if _action_executor.is_initialized() else None,
+                event_bus=_agent_events,
+            )
+            engine._saved_mcp_config = mcp_tools_config
+            session = engine.restore(session_path)
+            if session:
+                _engines[session.id] = engine
+                count += 1
+                print(f"  [AutoRestore] Restored {session.id[:8]} ({config.get('model', '?')})")
+        except Exception as e:
+            print(f"  [AutoRestore] Failed to restore {sid[:8]}: {e}")
+
+    # Second pass: orphaned session files (no matching config)
+    for session_path in glob.glob(os.path.join(SNAPSHOT_DIR, "*.json")):
+        fname = os.path.basename(session_path)
+        if fname.endswith(".config.json"):
+            continue
+        sid_candidate = fname.replace(".json", "").replace("session_", "")
+        if sid_candidate in loaded_ids:
+            continue
+        try:
+            llm_config = {
+                "api_url": "http://localhost:28000/v1/chat/completions",
+                "api_key": "", "model": "deepseek-v4-flash",
+                "temperature": 0.85, "max_tokens": 4096,
+            }
+            if not _action_executor.has_capability("Human"):
+                _action_executor.register("Human", HumanAdapter(event_bus=_agent_events))
             engine = RuntimeEngine(
                 llm_config=llm_config, world=_world, auto_save=False,
                 communication=_communication, shared_knowledge=_shared_knowledge,
@@ -141,10 +191,24 @@ def load_all_sessions() -> int:
             session = engine.restore(session_path)
             if session:
                 _engines[session.id] = engine
+                engine._saved_mcp_config = []
+                loaded_ids.add(session.id)
                 count += 1
-                print(f"  [AutoRestore] Restored {session.id[:8]} ({config.get('model', '?')})")
+                # Save config for orphaned sessions so next restart finds it
+                cfg_path = os.path.join(SNAPSHOT_DIR, f"{session.id}.config.json")
+                if not os.path.exists(cfg_path):
+                    with open(cfg_path, "w") as f:
+                        json.dump({
+                            "api_url": engine._llm.api_url,
+                            "api_key": getattr(engine._llm, "api_key", ""),
+                            "model": engine._llm.model,
+                            "temperature": engine._llm.temperature,
+                            "max_tokens": engine._llm.max_tokens,
+                            "mcp_tools": [],
+                        }, f)
+                print(f"  [AutoRestore] Restored {session.id[:8]} from {fname}")
         except Exception as e:
-            print(f"  [AutoRestore] Failed to restore {sid[:8]}: {e}")
+            print(f"  [AutoRestore] Failed to restore {fname}: {e}")
     return count
 
 
@@ -229,13 +293,35 @@ async def connect(req: ConnectRequest):
                 human_adapter = HumanAdapter(event_bus=_agent_events)
                 _action_executor.register("Human", human_adapter)
 
+        # Save MCP config on engine for snapshot persistence
+        mcp_configs_for_save = []
+        if req.mcp_tools:
+            mcp_configs_for_save = [
+                {"url": mc.url, "command": mc.command, "args": list(mc.args),
+                 "env": dict(mc.env), "timeout": mc.timeout}
+                for mc in req.mcp_tools
+            ]
         engine = RuntimeEngine(
-            llm_config=llm_config, world=_world, auto_save=False,
+            llm_config=llm_config, world=_world, auto_save=True,
             communication=_communication, shared_knowledge=_shared_knowledge,
             action_executor=_action_executor if _action_executor.is_initialized() else None,
             event_bus=_agent_events,
         )
+        engine._saved_mcp_config = mcp_configs_for_save
         session = engine.create_session()
+        session_path = os.path.join(SNAPSHOT_DIR, f"{session.id}.json")
+        engine._auto_save_path = session_path
+        # Save config alongside session so restore always has API key
+        config_path = os.path.join(SNAPSHOT_DIR, f"{session.id}.config.json")
+        with open(config_path, "w") as f:
+            json.dump({
+                "api_url": llm_config.get("api_url"),
+                "api_key": llm_config.get("api_key", ""),
+                "model": llm_config.get("model", "deepseek-v4-flash"),
+                "temperature": llm_config.get("temperature", 0.85),
+                "max_tokens": llm_config.get("max_tokens", 4096),
+                "mcp_tools": mcp_configs_for_save,
+            }, f)
         _engines[session.id] = engine
         return ConnectResponse(session_id=session.id)
     except Exception as e:
@@ -412,6 +498,19 @@ async def restore(req: RestoreRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Restore failed: {e}")
+
+
+@router.post("/api/restore-all")
+async def restore_all_sessions():
+    """Restore all saved sessions from disk."""
+    try:
+        # Ensure Human capability is available for restored sessions
+        if not _action_executor.has_capability("Human"):
+            _action_executor.register("Human", HumanAdapter(event_bus=_agent_events))
+        count = load_all_sessions()
+        return {"ok": True, "restored_count": count, "sessions": list(_engines.keys())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Delete Session ──

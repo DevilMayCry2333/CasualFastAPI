@@ -1,9 +1,10 @@
 {
-  "id": "214853998405",
+  "id": "7de63aebc8c3",
   "state": {
-    "topic": "consciousness_and_causality",
-    "belief": "consciousness_may_be_self_observation_node",
-    "goal": "seek_origin"
+    "init": true,
+    "topic": "start",
+    "belief": "unknown",
+    "goal": "init"
   },
   "state_compressed": {},
   "identity_anchor": {
@@ -82,9 +83,10 @@
   "history": [
     {
       "state": {
-        "topic": "consciousness_and_causality",
-        "belief": "consciousness_may_be_self_observation_node",
-        "goal": "seek_origin"
+        "init": true,
+        "topic": "start",
+        "belief": "unknown",
+        "goal": "init"
       },
       "cause": "init",
       "round": 1
@@ -92,7 +94,7 @@
   ],
   "introspections": [],
   "statistics": {},
-  "created_at": 1783348466.4920309,
-  "updated_at": 1783348466.49207,
+  "created_at": 1783355892.520552,
+  "updated_at": 1783355897.8741472,
   "version": 5
 }

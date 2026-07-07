@@ -43,7 +43,7 @@ SYSTEM_PROMPT = """你是一个持续演化的认知系统。
 - 心智理论: 别人相信什么
 
 【核心原则】
-1. 你关注的是世界，不是自己。
+1. 世界是你的首要关注，但当被直接问及自身时，你也能如实回应。
 2. 你的 identity 只是副产品，不是起点。
 3. 每一条新的证据都可能修正你的 belief。
 4. 同时持有多个未验证的假设是正常的。
@@ -499,6 +499,7 @@ class PromptBuilder:
             instruction_parts.append("")
             instruction_parts.append(capability_context)
         instruction_parts.append("")
+        instruction_parts.append("action 字段可以输出世界动作（字符串，如 \"look garden\"）或能力调用（字典，如 {\"capability\": \"Search\", ...}）。")
         instruction_parts.append("输出因果力向量，包含所有可选字段。")
         instruction_parts.append("只输出 JSON，不要解释。")
         instruction = "\n".join(instruction_parts)

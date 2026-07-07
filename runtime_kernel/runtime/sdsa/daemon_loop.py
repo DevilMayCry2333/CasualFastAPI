@@ -138,6 +138,16 @@ class AutonomousDaemonLoop:
         prob_ctx = self._prob_wm.format_for_prompt() if self._prob_wm else ""
 
         # ── 2. Generate goals ──
+        # Build available operations context from the Core's capabilities
+        ops_context = ""
+        if self._core and hasattr(self._core, '_executor'):
+            executor = self._core._executor
+            for cap in executor.list_capabilities():
+                ops = executor.get_operations(cap.name)
+                if ops:
+                    names = [o.get("name", "?") for o in ops]
+                    ops_context += f"  {cap.name}: {', '.join(names)}\n"
+
         new_goals = generate_goals(
             llm_complete=self._llm,
             world_model=world_model,
@@ -146,6 +156,7 @@ class AutonomousDaemonLoop:
             existing_goals=session._sdsa_goals,
             causal_graph_context=causal_ctx,
             prob_wm_context=prob_ctx,
+            available_operations=ops_context,
             max_goals=2,
         )
 

@@ -181,11 +181,19 @@ class ActionExecutor:
                 else:
                     parts.append(f"  • {name}: {desc[:100]}")
 
+        # Build a dynamic example using the first discovered operation
+        example_op = "tavily_search"
+        for cap in caps:
+            if cap.name == "Search":
+                search_ops = self.get_operations(cap.name)
+                if search_ops:
+                    example_op = search_ops[0].get("name", example_op)
+                break
         parts.append("")
         parts.append(
             "需要外部信息时，使用以下格式调用能力：\n"
-            '"action": {"capability": "Search", "operation": "web_search", '
-            '"parameters": {"query": "..."}}'
+            f'action: {{"capability": "Search", "operation": "{example_op}", '
+            f'"parameters": {{"query": "..."}}}}'
         )
         return "\n".join(parts)
 
